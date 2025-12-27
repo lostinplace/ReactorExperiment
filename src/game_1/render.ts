@@ -1,18 +1,18 @@
 import MinesweeperGame from './minesweeper_game.ts';
-import { cubeRange, cubeKey } from '../lib/hexlib.ts';
-import type { Cube, CubeKey } from '../lib/hexlib.ts';
+import { hexRange, hexCubeKey } from '../lib/hexlib.ts';
+import type { HexCubeCoord, HexCubeKey } from '../lib/hexlib.ts';
 import type { HexState } from '../ui/hex_grid.ts';
 
-export function mapGameToHexGrid(game: MinesweeperGame): Map<CubeKey, HexState> {
+export function mapGameToHexGrid(game: MinesweeperGame): Map<HexCubeKey, HexState> {
     const { mapRadius } = game.config;
-    const map = new Map<CubeKey, HexState>();
-    const center: Cube = [0, 0, 0];
+    const map = new Map<HexCubeKey, HexState>();
+    const center: HexCubeCoord = [0, 0, 0];
     
     // Iterate specific range instead of nested loops
-    const hexes = cubeRange(center, mapRadius);
+    const hexes = hexRange(center, mapRadius);
 
     for (const h of hexes) {
-        const key = cubeKey(h);
+        const key = hexCubeKey(h);
         const tags = new Set<string>();
         let value: string | number = '';
         

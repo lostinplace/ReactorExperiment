@@ -1,8 +1,9 @@
 import './style.css';
-import { type SinkEntity, type SourceEntity, ThermoGame } from './game_2/game';
+import { ThermoGame } from './game_2/game';
+import { type SinkEntity, type SourceEntity, type ShieldEntity, type ProbeEntity } from './game_2/hex_tick';
 import { getThermoStyle, mapThermoToHexGrid } from './game_2/render';
 import { HexGrid } from './ui/hex_grid';
-import { cubeKey, type CubeKey, generateHexagon, type Layout } from './lib/hexlib';
+import { hexCubeKey, type HexCubeKey, generateHexagon, type Layout } from './lib/hexlib';
 
 // ============================================================
 // DOM helpers
@@ -26,8 +27,9 @@ function setText(id: string, text: string) {
 function mountLayout(app: HTMLElement) {
   app.innerHTML = `
   <div id="reactor-layout" style="display:flex; width:100vw; height:100vh; overflow:hidden; margin:0; padding:0;">
-    <div id="reactor-sidebar" style="width:320px; background:#222; color:#eee; display:flex; flex-direction:column; align-items:flex-start; padding:10px; border-right:1px solid #444; z-index:10; box-sizing:border-box;">
-      <h2 style="margin-top:0;">Reactor Core</h2>
+    <!-- LEFT SIDEBAR: GAMEPLAY -->
+    <div id="reactor-sidebar-left" style="width:300px; background:#222; color:#eee; display:flex; flex-direction:column; align-items:flex-start; padding:10px; border-right:1px solid #444; z-index:10; box-sizing:border-box; overflow-y:auto;">
+      <h2 style="margin-top:0;">Reactor Control</h2>
 
       <div class="panel-section" style="display:flex; gap:8px; flex-wrap:wrap;">
         <button id="btn-play-pause">Play</button>
@@ -36,37 +38,46 @@ function mountLayout(app: HTMLElement) {
         <button id="btn-quench" style="background:#44a; color:white;">Quench</button>
       </div>
 
-      <div class="panel-section" style="display:flex; gap:8px; margin-top:5px;">
+      <div style="margin:10px 0;">Tick: <span id="tick-count">0</span></div>
+
+       <hr style="border-color:#444; width:100%;" />
+      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">SOURCE CONTROLS</div>
+      <div id="source-controls" style="margin-bottom:10px; width:100%;"></div>
+
+      <hr style="border-color:#444; width:100%;" />
+      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">SHIELD CONTROLS</div>
+      <div id="shield-controls" style="margin-bottom:10px; width:100%;"></div>
+
+      <hr style="border-color:#444; width:100%;" />
+      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">RESERVOIRS</div>
+      <div id="reservoir-controls" style="margin-bottom:10px; width:100%;"></div>
+
+      <hr style="border-color:#444; width:100%;" />
+      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">CAPACITOR BANKS & PROBES</div>
+      <div id="capacitor-controls" style="margin-bottom:10px; width:100%;"></div>
+    </div>
+
+    <!-- MAIN VIEW -->
+    <div id="reactor-main" style="flex:1; position:relative; background:#111; overflow:hidden;">
+      <div id="game-board" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>
+    </div>
+
+    <!-- RIGHT SIDEBAR: EDITOR -->
+    <div id="reactor-sidebar-right" style="width:280px; background:#222; color:#eee; display:flex; flex-direction:column; align-items:flex-start; padding:10px; border-left:1px solid #444; z-index:10; box-sizing:border-box;">
+      <h2 style="margin-top:0;">Construction</h2>
+
+      <div class="panel-section" style="display:flex; gap:8px; margin-bottom:10px; width:100%;">
         <button id="btn-save" style="flex:1; background:#444;">Save Layout</button>
         <button id="btn-load" style="flex:1; background:#444;">Load Layout</button>
       </div>
 
-      <div style="margin:10px 0;">Tick: <span id="tick-count">0</span></div>
-
       <hr style="border-color:#444; width:100%;" />
-
       <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">TOOLS</div>
       <div class="panel-section" id="palette-toolbar" style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:10px;"></div>
 
       <hr style="border-color:#444; width:100%;" />
-      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">SOURCE CONTROLS</div>
-      <div id="source-controls" style="margin-bottom:10px;"></div>
-
-      <hr style="border-color:#444; width:100%;" />
-      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">SHIELD CONTROLS</div>
-      <div id="shield-controls" style="margin-bottom:10px;"></div>
-
-      <hr style="border-color:#444; width:100%;" />
-      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">CAPACITOR BANKS & PROBES</div>
-      <div id="capacitor-controls" style="margin-bottom:10px;"></div>
-
-      <hr style="border-color:#444; width:100%;" />
-
-      <div id="entity-list" style="flex:1; overflow-y:auto; font-size:14px;"></div>
-    </div>
-
-    <div id="reactor-main" style="flex:1; position:relative; background:#111; overflow:hidden;">
-      <div id="game-board" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>
+      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">ENTITY LIST</div>
+      <div id="entity-list" style="flex:1; overflow-y:auto; font-size:14px; width:100%;"></div>
     </div>
   </div>
   `;
@@ -79,7 +90,7 @@ function mountLayout(app: HTMLElement) {
 type ToolType = 'select' | 'source' | 'sink' | 'shield' | 'probe' | 'erase';
 
 type SidebarSignature = {
-  selectedKey: CubeKey | null;
+  selectedKey: HexCubeKey | null;
   entityType: string; // 'empty' | entity.type
 };
 
@@ -88,11 +99,11 @@ type AppState = {
   rafId: number | null;
 
   activeTool: ToolType;
-  selectedKey: CubeKey | null;
+  selectedKey: HexCubeKey | null;
 
   // For drag painting
   isPointerDown: boolean;
-  hoveredKey: CubeKey | null;
+  hoveredKey: HexCubeKey | null;
 
   // Sidebar rebuild heuristics
   lastSidebarSig: SidebarSignature;
@@ -105,11 +116,12 @@ type AppState = {
 function createGameAndGrid() {
   const radius = 8;
   const cubes = generateHexagon(radius);
-  const keys = cubes.map(c => cubeKey(c));
+  const keys = cubes.map(c => hexCubeKey(c));
   const game = new ThermoGame(keys);
 
-  // Sidebar is 320px
-  const centerX = (window.innerWidth - 320) / 2;
+  // Sidebars: Left=300px, Right=280px. Total=580px.
+  // We want the origin relative to the "game-board" container which fills the remaining space.
+  const centerX = (window.innerWidth - 580) / 2;
   const centerY = window.innerHeight / 2;
 
   const layout: Layout = {
@@ -138,7 +150,7 @@ function renderFrame(game: ThermoGame, hexGrid: HexGrid, state: AppState) {
   const map = mapThermoToHexGrid(game);
   hexGrid.render(map, { styleFn: getThermoStyle });
 
-  setText('tick-count', String(game.tickCount));
+  setText('tick-count', String(game.state.tickCount));
 
   // Sidebar: rebuild structure only when necessary
   // We need to pass a "requestRender" function to updateSidebar so it can be passed to click handlers
@@ -149,28 +161,29 @@ function renderFrame(game: ThermoGame, hexGrid: HexGrid, state: AppState) {
   // Probe totals: targeted updates
   for (const id of [1, 2, 3, 4]) {
     const lbl = document.getElementById(`lbl-probe-total-${id}`);
-    if (lbl) lbl.textContent = (game.totalEnergyCollected.get(id) ?? 0).toFixed(1);
+    if (lbl) lbl.textContent = (game.state.totalEnergyCollected.get(id) ?? 0).toFixed(1);
 
     const rateLbl = document.getElementById(`lbl-probe-rate-${id}`);
     if (rateLbl) {
-        const rate = (game.lastTickEnergy.get(id) ?? 0).toFixed(2);
+        const rate = (game.state.lastTickEnergy.get(id) ?? 0).toFixed(2);
         rateLbl.textContent = `+${rate}/t`;
     }
   }
 
   updateCapacitorUI(game);
-  updateSourceList(game); // Update dynamic source list
+  updateReservoirUI(game); // New Reservoir update
+  updateSourceList(game); 
   for (const id of [1, 2, 3, 4]) {
     // Total -> Capacitor Stored
     const lbl = document.getElementById(`lbl-probe-total-${id}`);
-    const cap = game.capacitors.get(id);
+    const cap = game.state.capacitors.get(id);
     if (lbl && cap) lbl.textContent = (cap.stored).toFixed(0);
 
     // Rate -> Capacitor Delta
     const rateLbl = document.getElementById(`lbl-probe-rate-${id}`);
     if (rateLbl) {
         // Delta
-        const delta = (game.lastCapacitorDelta.get(id) ?? 0);
+        const delta = (game.state.lastCapacitorDelta.get(id) ?? 0);
         const sign = delta >= 0 ? '+' : '';
         rateLbl.textContent = `${sign}${delta.toFixed(2)}/t`;
         
@@ -184,8 +197,8 @@ function renderFrame(game: ThermoGame, hexGrid: HexGrid, state: AppState) {
 // Sidebar
 // ============================================================
 
-function computeSidebarSig(game: ThermoGame, selectedKey: CubeKey | null): SidebarSignature {
-  const ent = selectedKey ? game.entities.get(selectedKey) : undefined;
+function computeSidebarSig(game: ThermoGame, selectedKey: HexCubeKey | null): SidebarSignature {
+  const ent = selectedKey ? game.state.entities.get(selectedKey) : undefined;
   return {
     selectedKey,
     entityType: ent ? ent.type : 'empty'
@@ -213,7 +226,7 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
 
   // Selected Cell Detail
   if (state.selectedKey) {
-    const ent = game.entities.get(state.selectedKey);
+    const ent = game.state.entities.get(state.selectedKey);
 
     const detail = document.createElement('div');
     detail.id = 'sidebar-detail-panel';
@@ -243,7 +256,7 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
         detail.appendChild(
           createNumInput(
             'Group ID',
-            s.groupId,
+            s.groupId ?? 1,
             v => {
               s.groupId = clampInt(v, 1, 4);
             },
@@ -265,18 +278,34 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
       if (ent.type === 'sink') {
         const s = ent as SinkEntity;
         detail.appendChild(createNumInput('Pull Rate', s.pullRate, v => (s.pullRate = Math.min(1, Math.max(0, v))), 0.01, 'inp-pull'));
-        detail.appendChild(createNumInput('Max Dump', s.dumpMax, v => (s.dumpMax = v), 1, 'inp-dump'));
-        detail.appendChild(createNumInput('Cap Scale', s.capacityScale, v => (s.capacityScale = v), 1, 'inp-cap'));
         detail.appendChild(createNumInput('Conductivity', s.conductivity, v => (s.conductivity = v), 0.1, 'inp-cond'));
+        
+        detail.appendChild(
+          createNumInput(
+            'Group ID',
+            s.groupId ?? 1,
+            v => {
+              s.groupId = clampInt(v, 1, 6);
+            },
+            1,
+            'inp-sink-group'
+          )
+        );
 
-        const stored = document.createElement('div');
-        stored.style.marginTop = '5px';
-        stored.innerHTML = `Stored Heat: <span id="val-stored">${s.stored.toFixed(1)}</span>`;
-        detail.appendChild(stored);
+        // Display connected Reservoir status briefly? 
+        // Or just let user look at sidebar.
+        const r = game.state.reservoirs.get(s.groupId ?? 1);
+        if (r) {
+             const info = document.createElement('div');
+             info.style.marginTop = '5px';
+             info.style.color = '#aaa';
+             info.textContent = `Feeds Reservoir ${r.id} (${(r.heat / r.volume).toFixed(0)}°)`;
+             detail.appendChild(info);
+        }
       }
 
       if (ent.type === 'shield') {
-        const s = ent as any;
+        const s = ent as ShieldEntity;
         detail.appendChild(createNumInput('Conductivity', s.conductivity, v => (s.conductivity = v), 0.01, 'inp-cond'));
         detail.appendChild(
           createNumInput(
@@ -292,7 +321,7 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
       }
 
       if (ent.type === 'probe') {
-        const p = ent as any;
+        const p = ent as ProbeEntity;
         if (p.groupId === undefined) p.groupId = 1;
 
         detail.appendChild(
@@ -331,11 +360,11 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
   renderEntityList(game, state, list, requestRender);
 }
 
-function updateSidebarValues(game: ThermoGame, selectedKey: CubeKey | null) {
+function updateSidebarValues(game: ThermoGame, selectedKey: HexCubeKey | null) {
   if (!selectedKey) return;
 
-  const temp = game.E.get(selectedKey) ?? 0;
-  const ent = game.entities.get(selectedKey);
+  const temp = game.state.E.get(selectedKey) ?? 0;
+  const ent = game.state.entities.get(selectedKey);
 
   const tempEl = document.getElementById('val-temp');
   if (tempEl) {
@@ -349,12 +378,12 @@ function updateSidebarValues(game: ThermoGame, selectedKey: CubeKey | null) {
     const el = document.getElementById(id) as HTMLInputElement | null;
     if (el && document.activeElement !== el) el.value = String(val);
   };
-
+// ...
   if (ent.type === 'source') {
     const s = ent as SourceEntity;
     updateInputIfNotFocused('inp-power', s.power);
     updateInputIfNotFocused('inp-minactive', s.minActivation);
-    updateInputIfNotFocused('inp-group', s.groupId);
+    updateInputIfNotFocused('inp-group', s.groupId ?? 1);
 
     const btn = document.getElementById('btn-active-toggle') as HTMLButtonElement | null;
     if (btn) {
@@ -366,21 +395,17 @@ function updateSidebarValues(game: ThermoGame, selectedKey: CubeKey | null) {
   if (ent.type === 'sink') {
     const s = ent as SinkEntity;
     updateInputIfNotFocused('inp-pull', s.pullRate);
-    updateInputIfNotFocused('inp-dump', s.dumpMax);
-    updateInputIfNotFocused('inp-cap', s.capacityScale);
     updateInputIfNotFocused('inp-cond', s.conductivity);
-
-    const storedEl = document.getElementById('val-stored');
-    if (storedEl) storedEl.textContent = s.stored.toFixed(1);
+    updateInputIfNotFocused('inp-sink-group', s.groupId ?? 1);
   }
 
   if (ent.type === 'shield') {
-    updateInputIfNotFocused('inp-cond', (ent as any).conductivity);
-    updateInputIfNotFocused('inp-shield-group', (ent as any).groupId ?? 1);
+    updateInputIfNotFocused('inp-cond', (ent as ShieldEntity).conductivity);
+    updateInputIfNotFocused('inp-shield-group', (ent as ShieldEntity).groupId ?? 1);
   }
 
   if (ent.type === 'probe') {
-    const p = ent as any;
+    const p = ent as ProbeEntity;
     if (p.groupId === undefined) p.groupId = 1;
     updateInputIfNotFocused('inp-probe-group', p.groupId);
   }
@@ -393,19 +418,19 @@ function updateSidebarValues(game: ThermoGame, selectedKey: CubeKey | null) {
 }
 
 function renderEntityList(game: ThermoGame, state: AppState, list: HTMLElement, requestRender: () => void) {
-  const groups: Record<'source' | 'sink' | 'shield' | 'probe', Array<{ key: CubeKey; entity: any }>> = {
+  const groups: Record<'source' | 'sink' | 'shield' | 'probe', Array<{ key: HexCubeKey; entity: any }>> = {
     source: [],
     sink: [],
     shield: [],
     probe: []
   };
 
-  for (const [k, e] of game.entities) {
+  for (const [k, e] of game.state.entities) {
     const t = e.type as keyof typeof groups;
     if (groups[t]) groups[t].push({ key: k, entity: e });
   }
 
-  const renderGroup = (title: string, items: Array<{ key: CubeKey; entity: any }>) => {
+  const renderGroup = (title: string, items: Array<{ key: HexCubeKey; entity: any }>) => {
     if (items.length === 0) return;
 
     const header = document.createElement('div');
@@ -449,7 +474,7 @@ function renderEntityList(game: ThermoGame, state: AppState, list: HTMLElement, 
 function summarizeEntity(ent: any): string {
   if (!ent) return '';
   if (ent.type === 'source') return `G${ent.groupId} • Pwr: ${ent.power}`;
-  if (ent.type === 'sink') return `Stored: ${Number(ent.stored).toFixed(0)}`;
+  if (ent.type === 'sink') return `G${ent.groupId} • Pull: ${ent.pullRate}`;
   if (ent.type === 'shield') return `G${ent.groupId} • Cond: ${ent.conductivity}`;
   if (ent.type === 'probe') return `G${ent.groupId}`;
   return '';
@@ -565,7 +590,7 @@ function initSourceControls(game: ThermoGame, state: AppState, requestRender: ()
     wrap.style.border = '1px solid #444';
 
     // Get current value
-    const throttle = game.groupThrottles.get(groupId) ?? 0.0;
+    const throttle = game.state.groupThrottles.get(groupId) ?? 0.0;
     const pct = Math.round(throttle * 100);
 
     // Header: Label + Pct
@@ -590,7 +615,7 @@ function initSourceControls(game: ThermoGame, state: AppState, requestRender: ()
 
     slider.oninput = () => {
       const val = parseInt(slider.value, 10);
-      game.groupThrottles.set(groupId, val / 100);
+      game.state.groupThrottles.set(groupId, val / 100);
       setText(`lbl-grp-${groupId}`, `${val}%`);
       if (!state.isPlaying) requestRender();
     };
@@ -612,7 +637,7 @@ function initSourceControls(game: ThermoGame, state: AppState, requestRender: ()
 function updateSourceList(game: ThermoGame) {
     // 1. Gather active sources grouped by ID
     const sourcesByGroup = new Map<number, SourceEntity[]>();
-    for (const ent of game.entities.values()) {
+    for (const ent of game.state.entities.values()) {
         if (ent.type === 'source') {
             const s = ent as SourceEntity;
             const g = s.groupId || 1;
@@ -643,14 +668,14 @@ function updateSourceList(game: ThermoGame) {
         const seen = new Set<string>();
 
         // Sort by key for stability? Or just render order.
-        sources.sort((a,b) => cubeKey(a.pos).localeCompare(cubeKey(b.pos)));
+        sources.sort((a,b) => hexCubeKey(a.pos).localeCompare(hexCubeKey(b.pos)));
 
         for (const s of sources) {
-            const key = cubeKey(s.pos);
+            const key = hexCubeKey(s.pos);
             seen.add(key);
 
-            const temp = game.E.get(key) ?? 0;
-            const delta = game.lastDeltaE.get(key) ?? 0;
+            const temp = game.state.E.get(key) ?? 0;
+            const delta = game.state.lastDeltaE.get(key) ?? 0;
             const color = getTempColor(temp);
             const activeColor = s.active ? '#ddd' : '#777';
             const statusSym = s.active ? '●' : '○';
@@ -705,7 +730,7 @@ function initShieldControls(game: ThermoGame, requestRender: () => void) {
     btn.style.fontWeight = 'bold';
 
     const updateStyle = () => {
-      const disabled = game.disabledShieldGroups.has(groupId);
+      const disabled = game.state.disabledShieldGroups.has(groupId);
       btn.style.background = disabled ? '#422' : '#252';
       btn.style.border = disabled ? '1px solid #522' : '1px solid #5a5';
       btn.style.color = disabled ? '#aaa' : '#fff';
@@ -733,7 +758,7 @@ function initCapacitorControls(game: ThermoGame, requestRender: () => void) {
   container.style.gap = '8px';
 
   for (const groupId of [1, 2, 3, 4]) {
-    const cap = game.capacitors.get(groupId);
+    const cap = game.state.capacitors.get(groupId);
     if (!cap) continue;
 
     const wrap = document.createElement('div');
@@ -747,7 +772,7 @@ function initCapacitorControls(game: ThermoGame, requestRender: () => void) {
     // ------------------------------------------------------------
     
     // Get current throttle
-    const throttle = game.probeThrottles.get(groupId) ?? 0.0;
+    const throttle = game.state.probeThrottles.get(groupId) ?? 0.0;
     const pct = Math.round(throttle * 100);
 
     const head = document.createElement('div');
@@ -780,7 +805,7 @@ function initCapacitorControls(game: ThermoGame, requestRender: () => void) {
     slider.style.marginBottom = '4px';
     slider.oninput = () => {
        const val = parseInt(slider.value, 10);
-       game.probeThrottles.set(groupId, val / 100);
+       game.state.probeThrottles.set(groupId, val / 100);
        // Update label immediately
        const lbl = document.getElementById(`lbl-probe-val-${groupId}`);
        if (lbl) lbl.textContent = `Probe: ${val}%`;
@@ -844,38 +869,33 @@ function initCapacitorControls(game: ThermoGame, requestRender: () => void) {
     wrap.appendChild(stats);
 
     // Config Inputs (Cap, Drain, Cost)
-    const addInput = (label: string, val: number, onChange: (v: number) => void) => {
+    const addInput = (label: string, initialVal: number, onUpdate: (c: any, v: number) => void) => {
         const d = document.createElement('div');
         d.style.flex = '1';
         d.innerHTML = `<div style="font-size:0.7em; color:#777;">${label}</div>`;
         const inp = document.createElement('input');
         inp.type = 'number';
-        inp.value = String(val);
+        inp.value = String(initialVal);
         inp.style.width = '100%';
         inp.style.background = '#111';
         inp.style.border = '1px solid #333';
         inp.style.color = '#ccc';
         inp.style.fontSize = '0.8em';
         inp.onchange = () => {
-            onChange(parseFloat(inp.value));
-            requestRender();
+             // Dynamic lookup
+             const currentCap = game.state.capacitors.get(groupId);
+             if (currentCap) {
+                 onUpdate(currentCap, parseFloat(inp.value));
+                 requestRender();
+             }
         };
         d.appendChild(inp);
         controls.appendChild(d);
     };
 
-    addInput('Max', cap.capacity, v => {
-        const c = game.capacitors.get(groupId);
-        if (c) c.capacity = v;
-    });
-    addInput('Drain', cap.drainRate, v => {
-        const c = game.capacitors.get(groupId);
-        if (c) c.drainRate = v;
-    });
-    addInput('Cost', cap.surchargeCost, v => {
-        const c = game.capacitors.get(groupId);
-        if (c) c.surchargeCost = v;
-    });
+    addInput('Max', cap.capacity, (c, v) => c.capacity = v);
+    addInput('Drain', cap.drainRate, (c, v) => c.drainRate = v);
+    addInput('Cost', cap.surchargeCost, (c, v) => c.surchargeCost = v);
 
     wrap.appendChild(controls);
     container.appendChild(wrap);
@@ -883,7 +903,7 @@ function initCapacitorControls(game: ThermoGame, requestRender: () => void) {
 }
 
 function updateCapacitorUI(game: ThermoGame) {
-    for (const [id, cap] of game.capacitors) {
+    for (const [id, cap] of game.state.capacitors) {
         const prog = document.getElementById(`prog-cap-${id}`);
         const lbl = document.getElementById(`lbl-cap-val-${id}`);
         
@@ -903,12 +923,130 @@ function updateCapacitorUI(game: ThermoGame) {
     }
 }
 
+
+// ============================================================
+// Reservoir Controls
+// ============================================================
+
+function initReservoirControls(game: ThermoGame, requestRender: () => void) {
+    const container = mustGetEl<HTMLDivElement>('reservoir-controls');
+    container.innerHTML = '';
+    container.style.display = 'grid';
+    container.style.gridTemplateColumns = '1fr 1fr 1fr'; // 3 columns
+    container.style.gap = '5px';
+
+    // We iterate over the *initial* keys, which are stable (1..N)
+    for (const [id] of game.state.reservoirs) {
+        // Initial fetch just for display values -> careful, this is only at INIT time
+        const resInitial = game.state.reservoirs.get(id)!;
+        
+        const wrap = document.createElement('div');
+        wrap.className = 'reservoir-card';
+        wrap.setAttribute('data-id', String(id));
+        wrap.style.background = '#222';
+        wrap.style.border = '1px solid #444';
+        wrap.style.padding = '4px';
+        wrap.style.fontSize = '0.8em';
+
+        // Title
+        const title = document.createElement('div');
+        title.style.fontWeight = 'bold';
+        title.style.color = '#aaa';
+        title.textContent = `RES ${id}`;
+        wrap.appendChild(title);
+
+        // Temp
+        const temp = document.createElement('div');
+        temp.id = `res-temp-${id}`;
+        temp.style.color = '#fff';
+        temp.style.marginBottom = '2px';
+        temp.textContent = '0°';
+        wrap.appendChild(temp);
+
+        // Inputs (Volume, Rad Strength)
+        const inputs = document.createElement('div');
+        inputs.style.display = 'flex';
+        inputs.style.gap = '2px';
+        inputs.style.marginBottom = '2px';
+
+        const addInput = (label: string, initialVal: number, onUpdate: (r: any, v: number) => void) => {
+            const d = document.createElement('div');
+            d.style.flex = '1';
+            d.innerHTML = `<div style="font-size:0.6em; color:#777;">${label}</div>`;
+            const inp = document.createElement('input');
+            inp.type = 'number';
+            inp.value = String(initialVal);
+            inp.style.width = '100%';
+            inp.style.background = '#111';
+            inp.style.border = '1px solid #333';
+            inp.style.color = '#ccc';
+            inp.style.fontSize = '0.85em';
+            inp.onchange = () => {
+                const v = parseFloat(inp.value);
+                if (!isNaN(v)) {
+                   // DYNAMIC LOOKUP
+                   const currentRes = game.state.reservoirs.get(id);
+                   if (currentRes) {
+                       onUpdate(currentRes, v);
+                       requestRender();
+                   }
+                }
+            };
+            d.appendChild(inp);
+            inputs.appendChild(d);
+        };
+
+        addInput('Vol', resInitial.volume, (r, v) => r.volume = Math.max(1, v));
+        addInput('RadStr', resInitial.radiator.strength, (r, v) => r.radiator.strength = Math.max(0, v));
+        
+        wrap.appendChild(inputs);
+
+        // Radiator Toggle
+        const btn = document.createElement('button');
+        btn.id = `btn-rad-${id}`;
+        btn.textContent = 'RAD';
+        btn.style.width = '100%';
+        btn.style.fontSize = '0.7em';
+        btn.style.padding = '2px';
+        btn.style.cursor = 'pointer';
+        btn.onclick = () => {
+             // DYNAMIC LOOKUP
+             const currentRes = game.state.reservoirs.get(id);
+             if (currentRes) {
+                 currentRes.radiator.deployed = !currentRes.radiator.deployed;
+                 requestRender();
+             }
+        };
+        wrap.appendChild(btn);
+
+        container.appendChild(wrap);
+    }
+}
+
+function updateReservoirUI(game: ThermoGame) {
+    for (const [id, res] of game.state.reservoirs) {
+        const tempEl = document.getElementById(`res-temp-${id}`);
+        if (tempEl) {
+            const temp = res.heat / res.volume;
+            tempEl.textContent = `${temp.toFixed(0)}°`;
+            tempEl.style.color = getTempColor(temp);
+        }
+
+        const btn = document.getElementById(`btn-rad-${id}`);
+        if (btn) {
+            btn.style.background = res.radiator.deployed ? '#aaf' : '#333';
+            btn.style.color = res.radiator.deployed ? '#000' : '#888';
+            btn.style.border = res.radiator.deployed ? '1px solid #fff' : '1px solid #555';
+        }
+    }
+}
+
 // ============================================================
 // Interaction wiring
 // ============================================================
 
 function wireGridInteractions(game: ThermoGame, hexGrid: HexGrid, state: AppState, requestRender: () => void) {
-  const applyTool = (key: CubeKey) => {
+  const applyTool = (key: HexCubeKey) => {
     if (state.activeTool === 'select') {
       state.selectedKey = key;
     } else if (state.activeTool === 'erase') {
@@ -924,21 +1062,21 @@ function wireGridInteractions(game: ThermoGame, hexGrid: HexGrid, state: AppStat
   // IMPORTANT FIX: don't paint on hover unless dragging / mouse down.
   hexGrid.onCellMouseDown = hex => {
     state.isPointerDown = true;
-    applyTool(cubeKey(hex));
+    applyTool(hexCubeKey(hex));
   };
 
   hexGrid.onCellMouseEnter = hex => {
     if (!state.isPointerDown) return;
-    applyTool(cubeKey(hex));
+    applyTool(hexCubeKey(hex));
   };
 
   hexGrid.onCellHover = hex => {
-    state.hoveredKey = cubeKey(hex);
+    state.hoveredKey = hexCubeKey(hex);
   };
 2
   hexGrid.onCellClick = hex => {
     // Click as a single action still applies (useful on touch)
-    applyTool(cubeKey(hex));
+    applyTool(hexCubeKey(hex));
   };
 
   hexGrid.onCellRightClick = hex => {
@@ -974,52 +1112,97 @@ function wireTopControls(game: ThermoGame, state: AppState, requestRender: () =>
   };
 
   mustGetEl<HTMLButtonElement>('btn-quench').onclick = () => {
-    for (const key of game.E.keys()) game.E.set(key, 0);
-    for (const ent of game.entities.values()) {
-      if (ent.type === 'sink') (ent as SinkEntity).stored = 0;
+    for (const key of game.state.E.keys()) game.state.E.set(key, 0);
+    // Reset Reservoirs
+    for (const res of game.state.reservoirs.values()) {
+        res.heat = 0;
     }
     requestRender();
     console.log('Reactor Quenched');
   };
 
-  mustGetEl<HTMLButtonElement>('btn-save').onclick = () => {
+  mustGetEl<HTMLButtonElement>('btn-save').onclick = async () => {
     const json = game.serialize();
-    localStorage.setItem('reactor_layout_v1', json);
-    console.log('Layout saved to localStorage');
-    alert('Layout saved!');
+    try {
+        // @ts-ignore
+        if (window.showSaveFilePicker) {
+            // @ts-ignore
+            const handle = await window.showSaveFilePicker({
+                suggestedName: 'reactor_layout.json',
+                types: [{
+                    description: 'JSON File',
+                    accept: {'application/json': ['.json']},
+                }],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(json);
+            await writable.close();
+        } else {
+             const blob = new Blob([json], { type: 'application/json' });
+             const url = URL.createObjectURL(blob);
+             const a = document.createElement('a');
+             a.href = url;
+             a.download = 'reactor_layout.json';
+             document.body.appendChild(a);
+             a.click();
+             document.body.removeChild(a);
+             URL.revokeObjectURL(url);
+        }
+        console.log('Layout exported');
+    } catch (err) {
+        console.error('Save cancelled or failed', err);
+    }
   };
 
   mustGetEl<HTMLButtonElement>('btn-load').onclick = () => {
-    const json = localStorage.getItem('reactor_layout_v1');
-    if (json) {
-        game.deserialize(json);
-        
-        // Refresh Controls to reflect loaded state
-        // Re-initialize controls to pick up new values
-        // Ideally we would have updateXXX() methods, but re-init works if we clear container
-        initSourceControls(game, state, requestRender);
-        initShieldControls(game, requestRender);
-        initCapacitorControls(game, requestRender);
+    // Hidden file input approach
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.style.display = 'none';
+    document.body.appendChild(input);
 
-        requestRender();
-        console.log('Layout loaded from localStorage');
-    } else {
-        alert('No saved layout found.');
-    }
+    input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const text = evt.target?.result as string;
+            if (text) {
+                 game.deserialize(text);
+                 
+                 // Refresh Controls
+                 initSourceControls(game, state, requestRender);
+                 initShieldControls(game, requestRender);
+                 initReservoirControls(game, requestRender);
+                 initCapacitorControls(game, requestRender);
+                 
+                 // Reset throttles UI
+                 requestRender();
+                 console.log('Layout loaded from file');
+            }
+        };
+        reader.readAsText(file);
+        document.body.removeChild(input);
+    };
+    
+    input.click();
   };
 }
 
 function wireKeyboardShortcuts(game: ThermoGame, state: AppState, requestRender: () => void) {
   window.addEventListener('keydown', e => {
-    // Group assignment (1-4)
-    if (['1', '2', '3', '4'].includes(e.key)) {
+    // Group assignment (0-9)
+    if (['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(e.key)) {
       const groupId = parseInt(e.key, 10);
       
       // If we are hovering something, assign it
       if (state.hoveredKey) {
-        const ent = game.entities.get(state.hoveredKey);
-        if (ent && (ent.type === 'source' || ent.type === 'shield' || ent.type === 'probe')) {
-          (ent as any).groupId = groupId;
+        const ent = game.state.entities.get(state.hoveredKey);
+        // Apply to any entity that has a groupId property/slot
+        if (ent && (ent.type === 'source' || ent.type === 'shield' || ent.type === 'probe' || ent.type === 'sink')) {
+          ent.groupId = groupId;
           requestRender();
         }
       }
@@ -1052,7 +1235,7 @@ const requestRender = () => renderFrame(game, hexGrid, state);
 initPalette(state);
 initSourceControls(game, state, requestRender);
 initShieldControls(game, requestRender);
-// initProbeControls(game, state, requestRender); // REMOVED
+initReservoirControls(game, requestRender);
 initCapacitorControls(game, requestRender); // Unified
 
 wireGridInteractions(game, hexGrid, state, requestRender);

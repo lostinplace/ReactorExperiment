@@ -17,17 +17,17 @@
  *   - All functions are pure and do not mutate inputs.
  */
 
-export type Cube = readonly [number, number, number];
+export type HexCubeCoord = readonly [number, number, number];
 export type Axial = readonly [number, number]; // optional interoperability
-export type CubeKey = string;
+export type HexCubeKey = string;
 
 export const EPS = 1e-9;
 
 // -----------------------------
 // Keys / parsing
 // -----------------------------
-export const cubeKey = (c: Cube): CubeKey => `${c[0]},${c[1]},${c[2]}`;
-export const parseCubeKey = (k: CubeKey): Cube => {
+export const hexCubeKey = (c: HexCubeCoord): HexCubeKey => `${c[0]},${c[1]},${c[2]}`;
+export const parseHexCubeKey = (k: HexCubeKey): HexCubeCoord => {
   const parts = k.split(",");
   if (parts.length !== 3) throw new Error(`Invalid CubeKey: "${k}"`);
   const x = Number(parts[0]), y = Number(parts[1]), z = Number(parts[2]);
@@ -37,31 +37,27 @@ export const parseCubeKey = (k: CubeKey): Cube => {
 // -----------------------------
 // Validation / basic ops
 // -----------------------------
-export const isValidCube = (c: Cube): boolean => c[0] + c[1] + c[2] === 0;
+export const isValidHexCubeKey = (c: HexCubeCoord): boolean => c[0] + c[1] + c[2] === 0;
 
-export const assertValidCube = (c: Cube, label = "cube"): void => {
-  if (!isValidCube(c)) throw new Error(`Invalid ${label} coord: (${c.join(",")}) (x+y+z must equal 0)`);
-};
+export const hexAdd = (a: HexCubeCoord, b: HexCubeCoord): HexCubeCoord => [a[0] + b[0], a[1] + b[1], a[2] + b[2]] as const;
+export const hexSub = (a: HexCubeCoord, b: HexCubeCoord): HexCubeCoord => [a[0] - b[0], a[1] - b[1], a[2] - b[2]] as const;
+export const hexScale = (a: HexCubeCoord, k: number): HexCubeCoord => [a[0] * k, a[1] * k, a[2] * k] as const;
 
-export const cubeAdd = (a: Cube, b: Cube): Cube => [a[0] + b[0], a[1] + b[1], a[2] + b[2]] as const;
-export const cubeSub = (a: Cube, b: Cube): Cube => [a[0] - b[0], a[1] - b[1], a[2] - b[2]] as const;
-export const cubeScale = (a: Cube, k: number): Cube => [a[0] * k, a[1] * k, a[2] * k] as const;
+export const hexEq = (a: HexCubeCoord, b: HexCubeCoord): boolean => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 
-export const cubeEq = (a: Cube, b: Cube): boolean => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
-
-export const cubeLength = (c: Cube): number =>
+export const hexLength = (c: HexCubeCoord): number =>
   (Math.abs(c[0]) + Math.abs(c[1]) + Math.abs(c[2])) / 2;
 
 // Canonical distance formula
-export const cubeDistance = (a: Cube, b: Cube): number => cubeLength(cubeSub(a, b));
+export const hexDistance = (a: HexCubeCoord, b: HexCubeCoord): number => hexLength(hexSub(a, b));
 
 // A common equivalent (also valid for cube coords):
-export const cubeRadius = (c: Cube): number => Math.max(Math.abs(c[0]), Math.abs(c[1]), Math.abs(c[2]));
+export const hexRadius = (c: HexCubeCoord): number => Math.max(Math.abs(c[0]), Math.abs(c[1]), Math.abs(c[2]));
 
 // -----------------------------
 // Directions / neighbors
 // -----------------------------
-export const CUBE_DIRS: readonly Cube[] = [
+export const HEX_CUBE_DIRS: readonly HexCubeCoord[] = [
   [1, -1, 0],
   [1, 0, -1],
   [0, 1, -1],
@@ -70,26 +66,16 @@ export const CUBE_DIRS: readonly Cube[] = [
   [0, -1, 1],
 ] as const;
 
-export const cubeDir = (dirIndex: number): Cube => {
+export const hexDir = (dirIndex: number): HexCubeCoord => {
   const i = ((dirIndex % 6) + 6) % 6;
-  return CUBE_DIRS[i];
+  return HEX_CUBE_DIRS[i];
 };
 
-export const cubeNeighbor = (c: Cube, dirIndex: number): Cube => cubeAdd(c, cubeDir(dirIndex));
-export const cubeNeighbors = (c: Cube): Cube[] => CUBE_DIRS.map(d => cubeAdd(c, d));
+export const hexNeighbor = (c: HexCubeCoord, dirIndex: number): HexCubeCoord => hexAdd(c, hexDir(dirIndex));
+export const hexNeighbors = (c: HexCubeCoord): HexCubeCoord[] => HEX_CUBE_DIRS.map(d => hexAdd(c, d));
 
-// -----------------------------
-// Axial interoperability
-// -----------------------------
-export const axialToCube = (a: Axial): Cube => {
-  const q = a[0], r = a[1];
-  const x = q;
-  const z = r;
-  const y = -x - z;
-  return [x, y, z] as const;
-};
 
-export const cubeToAxial = (c: Cube): Axial => [c[0], c[2]] as const;
+export const hexCubeToAxial = (c: HexCubeCoord): Axial => [c[0], c[2]] as const;
 
 // -----------------------------
 // Ranges / rings / spirals
@@ -99,12 +85,12 @@ export const cubeToAxial = (c: Cube): Axial => [c[0], c[2]] as const;
  * All cubes within distance <= R of center (a filled hex).
  * Count = 1 + 3R(R+1)
  */
-export const cubeRange = (center: Cube, R: number): Cube[] => {
-  const out: Cube[] = [];
+export const hexRange = (center: HexCubeCoord, R: number): HexCubeCoord[] => {
+  const out: HexCubeCoord[] = [];
   for (let dx = -R; dx <= R; dx++) {
     for (let dy = Math.max(-R, -dx - R); dy <= Math.min(R, -dx + R); dy++) {
       const dz = -dx - dy;
-      out.push(cubeAdd(center, [dx, dy, dz] as const));
+      out.push(hexAdd(center, [dx, dy, dz] as const));
     }
   }
   return out;
@@ -113,18 +99,18 @@ export const cubeRange = (center: Cube, R: number): Cube[] => {
 /**
  * Exactly distance == R from center (a ring). Returns cells in a clockwise loop.
  */
-export const cubeRing = (center: Cube, R: number): Cube[] => {
+export const hexRing = (center: HexCubeCoord, R: number): HexCubeCoord[] => {
   if (R < 0) return [];
   if (R === 0) return [center];
 
   // Start at "direction 4" (arbitrary) scaled by R, then walk 6 sides
-  let cube = cubeAdd(center, cubeScale(cubeDir(4), R));
-  const results: Cube[] = [];
+  let thisCell = hexAdd(center, hexScale(hexDir(4), R));
+  const results: HexCubeCoord[] = [];
 
   for (let side = 0; side < 6; side++) {
     for (let step = 0; step < R; step++) {
-      results.push(cube);
-      cube = cubeNeighbor(cube, side);
+      results.push(thisCell);
+      thisCell = hexNeighbor(thisCell, side);
     }
   }
   return results;
@@ -133,9 +119,9 @@ export const cubeRing = (center: Cube, R: number): Cube[] => {
 /**
  * Spiral out from center up to radius R, in ring order.
  */
-export const cubeSpiral = (center: Cube, R: number): Cube[] => {
-  const out: Cube[] = [center];
-  for (let r = 1; r <= R; r++) out.push(...cubeRing(center, r));
+export const hexSpiral = (center: HexCubeCoord, R: number): HexCubeCoord[] => {
+  const out: HexCubeCoord[] = [center];
+  for (let r = 1; r <= R; r++) out.push(...hexRing(center, r));
   return out;
 };
 
@@ -143,9 +129,9 @@ export const cubeSpiral = (center: Cube, R: number): Cube[] => {
 // Lines (lerp + rounding)
 // -----------------------------
 
-type CubeFrac = readonly [number, number, number];
+type HexFrac = readonly [number, number, number];
 
-const cubeLerp = (a: CubeFrac, b: CubeFrac, t: number): CubeFrac => [
+const hexLerp = (a: HexFrac, b: HexFrac, t: number): HexFrac => [
   a[0] + (b[0] - a[0]) * t,
   a[1] + (b[1] - a[1]) * t,
   a[2] + (b[2] - a[2]) * t,
@@ -154,7 +140,7 @@ const cubeLerp = (a: CubeFrac, b: CubeFrac, t: number): CubeFrac => [
 /**
  * Round fractional cube coordinates to the nearest valid cube coord.
  */
-export const cubeRound = (f: CubeFrac): Cube => {
+export const hexRound = (f: HexFrac): HexCubeCoord => {
   let rx = Math.round(f[0]);
   let ry = Math.round(f[1]);
   let rz = Math.round(f[2]);
@@ -177,17 +163,17 @@ export const cubeRound = (f: CubeFrac): Cube => {
 /**
  * Get the straight line (inclusive) between a and b on a hex grid.
  */
-export const cubeLine = (a: Cube, b: Cube): Cube[] => {
-  const N = cubeDistance(a, b);
+export const hexLine = (a: HexCubeCoord, b: HexCubeCoord): HexCubeCoord[] => {
+  const N = hexDistance(a, b);
   if (N === 0) return [a];
 
   // Nudge to avoid edge-case rounding ties
-  const aF: CubeFrac = [a[0] + EPS, a[1] + EPS, a[2] - 2 * EPS] as const;
-  const bF: CubeFrac = [b[0] + EPS, b[1] + EPS, b[2] - 2 * EPS] as const;
+  const aF: HexFrac = [a[0] + EPS, a[1] + EPS, a[2] - 2 * EPS] as const;
+  const bF: HexFrac = [b[0] + EPS, b[1] + EPS, b[2] - 2 * EPS] as const;
 
-  const out: Cube[] = [];
+  const out: HexCubeCoord[] = [];
   for (let i = 0; i <= N; i++) {
-    out.push(cubeRound(cubeLerp(aF, bF, i / N)));
+    out.push(hexRound(hexLerp(aF, bF, i / N)));
   }
   return out;
 };
@@ -200,7 +186,7 @@ export const cubeLine = (a: Cube, b: Cube): Cube[] => {
  * Rotate around origin by 60° steps clockwise.
  * steps can be any integer (mod 6).
  */
-export const cubeRotateCW = (c: Cube, steps: number): Cube => {
+export const hexRotateCW = (c: HexCubeCoord, steps: number): HexCubeCoord => {
   let s = ((steps % 6) + 6) % 6;
   let [x, y, z] = c;
   while (s-- > 0) {
@@ -210,16 +196,16 @@ export const cubeRotateCW = (c: Cube, steps: number): Cube => {
   return [x, y, z] as const;
 };
 
-export const cubeRotateCCW = (c: Cube, steps: number): Cube => cubeRotateCW(c, -steps);
+export const hexRotateCCW = (c: HexCubeCoord, steps: number): HexCubeCoord => hexRotateCW(c, -steps);
 
-export const cubeRotateAround = (c: Cube, center: Cube, stepsCW: number): Cube =>
-  cubeAdd(center, cubeRotateCW(cubeSub(c, center), stepsCW));
+export const hexRotateAround = (c: HexCubeCoord, center: HexCubeCoord, stepsCW: number): HexCubeCoord =>
+  hexAdd(center, hexRotateCW(hexSub(c, center), stepsCW));
 
 /**
  * Reflect across a chosen axis in cube space.
  * axis = "x" | "y" | "z"
  */
-export const cubeReflect = (c: Cube, axis: "x" | "y" | "z"): Cube => {
+export const hexReflect = (c: HexCubeCoord, axis: "x" | "y" | "z"): HexCubeCoord => {
   const [x, y, z] = c;
   switch (axis) {
     case "x": return [x, z, y] as const;
@@ -228,8 +214,8 @@ export const cubeReflect = (c: Cube, axis: "x" | "y" | "z"): Cube => {
   }
 };
 
-export const cubeReflectAround = (c: Cube, center: Cube, axis: "x" | "y" | "z"): Cube =>
-  cubeAdd(center, cubeReflect(cubeSub(c, center), axis));
+export const hexReflectAround = (c: HexCubeCoord, center: HexCubeCoord, axis: "x" | "y" | "z"): HexCubeCoord =>
+  hexAdd(center, hexReflect(hexSub(c, center), axis));
 
 // -----------------------------
 // Board generation (hexagon)
@@ -239,22 +225,22 @@ export const cubeReflectAround = (c: Cube, center: Cube, axis: "x" | "y" | "z"):
  * Generate coords for a perfect hexagon board of radius R centered at `center`.
  * Cells satisfy max(|dx|,|dy|,|dz|) <= R relative to center.
  */
-export const generateHexagon = (R: number, center: Cube = [0, 0, 0]): Cube[] => cubeRange(center, R);
+export const generateHexagon = (R: number, center: HexCubeCoord = [0, 0, 0]): HexCubeCoord[] => hexRange(center, R);
 
 /**
  * Edge test for a perfect hexagon of radius R around `center`.
  */
-export const isHexagonEdge = (c: Cube, R: number, center: Cube = [0, 0, 0]): boolean => {
-  const rel = cubeSub(c, center);
-  return cubeRadius(rel) === R;
+export const isHexagonEdge = (c: HexCubeCoord, R: number, center: HexCubeCoord = [0, 0, 0]): boolean => {
+  const rel = hexSub(c, center);
+  return hexRadius(rel) === R;
 };
 
 /**
  * Convenience: build a Set of keys for O(1) membership checks.
  */
-export const coordKeySet = (coords: Iterable<Cube>): Set<CubeKey> => {
-  const s = new Set<CubeKey>();
-  for (const c of coords) s.add(cubeKey(c));
+export const coordKeySet = (coords: Iterable<HexCubeCoord>): Set<HexCubeKey> => {
+  const s = new Set<HexCubeKey>();
+  for (const c of coords) s.add(hexCubeKey(c));
   return s;
 };
 
@@ -289,8 +275,8 @@ export interface Layout {
  * Convert cube -> pixel center position.
  * (Uses standard axial projection via cubeToAxial, then orientation matrices.)
  */
-export const cubeToPixel = (c: Cube, layout: Layout): Point => {
-  const [q, r] = cubeToAxial(c); // q = x, r = z
+export const hexToPixel = (c: HexCubeCoord, layout: Layout): Point => {
+  const [q, r] = hexCubeToAxial(c); // q = x, r = z
   const { size, origin, orientation } = layout;
 
   if (orientation === "pointy") {
@@ -309,7 +295,7 @@ export const cubeToPixel = (c: Cube, layout: Layout): Point => {
 /**
  * Convert pixel -> nearest cube coord.
  */
-export const pixelToCube = (p: Point, layout: Layout): Cube => {
+export const pixelToHex = (p: Point, layout: Layout): HexCubeCoord => {
   const { size, origin, orientation } = layout;
   const px = (p.x - origin.x) / size.x;
   const py = (p.y - origin.y) / size.y;
@@ -328,20 +314,20 @@ export const pixelToCube = (p: Point, layout: Layout): Cube => {
   }
 
   // axial (q,r) -> cube (x,y,z) then round
-  const frac: CubeFrac = [q, -q - r, r] as const;
-  return cubeRound(frac);
+  const frac: HexFrac = [q, -q - r, r] as const;
+  return hexRound(frac);
 };
 
 // -----------------------------
 // Useful small helpers
 // -----------------------------
-export const cubeClampRadius = (c: Cube, maxR: number): Cube => {
+export const hexClampRadius = (c: HexCubeCoord, maxR: number): HexCubeCoord => {
   // Not a "normalize"; just a utility: if already within radius, return it,
   // otherwise move it toward origin along the line to origin until within maxR.
-  const r = cubeRadius(c);
+  const r = hexRadius(c);
   if (r <= maxR) return c;
   // Move along line from origin to c, and pick point at distance maxR
-  const line = cubeLine([0, 0, 0], c);
+  const line = hexLine([0, 0, 0], c);
   return line[maxR] ?? line[line.length - 1];
 };
 
@@ -349,10 +335,10 @@ export const cubeClampRadius = (c: Cube, maxR: number): Cube => {
  * Iterate all coords that are inside `coordsSet` but also within radius R of center.
  * Handy for custom shapes where you want local neighborhoods clipped by the board.
  */
-export const clippedRange = (center: Cube, R: number, coordsSet: Set<CubeKey>): Cube[] => {
-  const out: Cube[] = [];
-  for (const c of cubeRange(center, R)) {
-    if (coordsSet.has(cubeKey(c))) out.push(c);
+export const clippedRange = (center: HexCubeCoord, R: number, coordsSet: Set<HexCubeKey>): HexCubeCoord[] => {
+  const out: HexCubeCoord[] = [];
+  for (const c of hexRange(center, R)) {
+    if (coordsSet.has(hexCubeKey(c))) out.push(c);
   }
   return out;
 };

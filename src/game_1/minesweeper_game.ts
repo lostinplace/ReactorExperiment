@@ -1,5 +1,5 @@
-import { cubeKey, cubeNeighbors, cubeRange, parseCubeKey, cubeEq } from '../lib/hexlib.ts';
-import type { Cube, CubeKey } from '../lib/hexlib.ts';
+import { hexCubeKey, hexNeighbors, hexRange, parseHexCubeKey, hexEq } from '../lib/hexlib.ts';
+import type { HexCubeCoord, HexCubeKey } from '../lib/hexlib.ts';
 import { RNG } from '../lib/rng.ts';
 import GameConfig from './config.ts';
 import { RunState } from './run_state.ts';
@@ -14,15 +14,15 @@ export const GameState = {
 export type GameState = typeof GameState[keyof typeof GameState];
 
 class MinesweeperGame {
-    public mines: Map<CubeKey, number> = new Map();
-    public revealed: Set<CubeKey> = new Set();
-    public flagged: Set<CubeKey> = new Set();
+    public mines: Map<HexCubeKey, number> = new Map();
+    public revealed: Set<HexCubeKey> = new Set();
+    public flagged: Set<HexCubeKey> = new Set();
     public state: GameState = GameState.PLAYING;
     public config: GameConfig;
     public runState: RunState;
     private rng: RNG;
 
-    public onMineRevealed: ((h: Cube) => void) | null = null;
+    public onMineRevealed: ((h: HexCubeCoord) => void) | null = null;
     public onGameStart: (() => void) | null = null;
 
     constructor(config: GameConfig) {
@@ -37,9 +37,9 @@ class MinesweeperGame {
         }
     }
 
-    private generateMines(safeHex: Cube) {
-        const center: Cube = [0, 0, 0];
-        const allHexes = cubeRange(center, this.config.mapRadius).filter(h => !cubeEq(h, safeHex));
+    private generateMines(safeHex: HexCubeCoord) {
+        const center: HexCubeCoord = [0, 0, 0];
+        const allHexes = hexRange(center, this.config.mapRadius).filter(h => !hexEq(h, safeHex));
 
         // Shuffle and pick mines
         for (let i = allHexes.length - 1; i > 0; i--) {
@@ -50,13 +50,13 @@ class MinesweeperGame {
         for (let i = 0; i < this.config.mineCount && i < allHexes.length; i++) {
             // Random value between 0.5 and 1.9
             const mineValue = this.rng.nextRange(0.5, 1.9);
-            this.mines.set(cubeKey(allHexes[i]), mineValue);
+            this.mines.set(hexCubeKey(allHexes[i]), mineValue);
         }
     }
 
-    public reveal(h: Cube) {
+    public reveal(h: HexCubeCoord) {
         if (this.state !== GameState.PLAYING) return;
-        const key = cubeKey(h);
+        const key = hexCubeKey(h);
         if (this.flagged.has(key) || this.revealed.has(key)) return;
 
         // First click generation
@@ -79,7 +79,7 @@ class MinesweeperGame {
         if (neighborMines === 0) {
             // Flood fill
             // Neighbors are 6 directions
-            for (const neighbor of cubeNeighbors(h)) {
+            for (const neighbor of hexNeighbors(h)) {
                 if (this.isValidHex(neighbor)) {
                     this.reveal(neighbor);
                 }
@@ -90,12 +90,12 @@ class MinesweeperGame {
         // this.checkWin();
     }
 
-    private resetRadius(center: Cube, radius: number) {
-        const targets = cubeRange(center, radius);
+    private resetRadius(center: HexCubeCoord, radius: number) {
+        const targets = hexRange(center, radius);
         
         for (const target of targets) {
             if (this.isValidHex(target)) {
-                const key = cubeKey(target);
+                const key = hexCubeKey(target);
                 if (this.flagged.has(key)) {
                     this.flagged.delete(key);
                     this.runState.removeFlag(key);
@@ -105,11 +105,11 @@ class MinesweeperGame {
         }
     }
 
-    public onFlagStateChange: ((hex: Cube, isFlagged: boolean) => void) | null = null;
+    public onFlagStateChange: ((hex: HexCubeCoord, isFlagged: boolean) => void) | null = null;
 
-    public toggleFlag(h: Cube) {
-        if (this.state !== GameState.PLAYING || this.revealed.has(cubeKey(h))) return;
-        const key = cubeKey(h);
+    public toggleFlag(h: HexCubeCoord) {
+        if (this.state !== GameState.PLAYING || this.revealed.has(hexCubeKey(h))) return;
+        const key = hexCubeKey(h);
         const isFlagged = this.flagged.has(key);
         
         if (isFlagged) {
@@ -127,10 +127,10 @@ class MinesweeperGame {
         this.checkWin();
     }
 
-    public countNeighborMines(h: Cube): number {
+    public countNeighborMines(h: HexCubeCoord): number {
         let count = 0;
-        for (const neighbor of cubeNeighbors(h)) {
-            const val = this.mines.get(cubeKey(neighbor));
+        for (const neighbor of hexNeighbors(h)) {
+            const val = this.mines.get(hexCubeKey(neighbor));
             if (val !== undefined) {
                 count += val;
             }
@@ -138,7 +138,7 @@ class MinesweeperGame {
         return count;
     }
 
-    private isValidHex(h: Cube): boolean {
+    private isValidHex(h: HexCubeCoord): boolean {
         // Simple radius check from origin
         return Math.max(Math.abs(h[0]), Math.abs(h[1]), Math.abs(h[2])) <= this.config.mapRadius;
     }
@@ -187,7 +187,7 @@ class MinesweeperGame {
         
         let heatSum = 0;
         for (const revealedKey of this.revealed) {
-            const h = parseCubeKey(revealedKey);
+            const h = parseHexCubeKey(revealedKey);
             
             if (!this.mines.has(revealedKey)) {
                 heatSum += this.countNeighborMines(h);

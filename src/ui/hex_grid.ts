@@ -1,5 +1,5 @@
-import { cubeToPixel, parseCubeKey } from '../lib/hexlib';
-import type { Cube, CubeKey, Layout } from '../lib/hexlib';
+import { hexToPixel, parseHexCubeKey } from '../lib/hexlib';
+import type { HexCubeCoord, HexCubeKey, Layout } from '../lib/hexlib';
 import { trunc_n } from '../lib/utils';
 
 export interface HexState {
@@ -16,7 +16,7 @@ export interface HexCellStyle {
 }
 
 export interface HexRenderOptions {
-    styleFn?: (state: HexState, key: CubeKey) => HexCellStyle;
+    styleFn?: (state: HexState, key: HexCubeKey) => HexCellStyle;
 }
 
 export class HexGrid {
@@ -24,11 +24,11 @@ export class HexGrid {
     private layout: Layout;
     private cellCache: Map<string, HTMLElement> = new Map();
     
-    public onCellClick: ((hex: Cube) => void) | null = null;
-    public onCellMouseDown: ((hex: Cube) => void) | null = null;
-    public onCellMouseEnter: ((hex: Cube) => void) | null = null;
-    public onCellHover: ((hex: Cube) => void) | null = null;
-    public onCellRightClick: ((hex: Cube) => void) | null = null;
+    public onCellClick: ((hex: HexCubeCoord) => void) | null = null;
+    public onCellMouseDown: ((hex: HexCubeCoord) => void) | null = null;
+    public onCellMouseEnter: ((hex: HexCubeCoord) => void) | null = null;
+    public onCellHover: ((hex: HexCubeCoord) => void) | null = null;
+    public onCellRightClick: ((hex: HexCubeCoord) => void) | null = null;
 
     constructor(container: HTMLElement, layout: Layout) {
         this.container = container;
@@ -45,7 +45,7 @@ export class HexGrid {
         this.layout = layout;
     }
 
-    public render(map: Map<CubeKey, HexState>, options: HexRenderOptions = {}) {
+    public render(map: Map<HexCubeKey, HexState>, options: HexRenderOptions = {}) {
         // console.log(`HexGrid: Rendering ${map.size} items`);
         
         const currentKeys = new Set<string>();
@@ -62,8 +62,8 @@ export class HexGrid {
 
             // Create if not exists
             if (!el) {
-                const h = parseCubeKey(key);
-                const pixel = cubeToPixel(h, this.layout);
+                const h = parseHexCubeKey(key);
+                const pixel = hexToPixel(h, this.layout);
 
                 el = document.createElement('div');
                 el.className = 'hex';
