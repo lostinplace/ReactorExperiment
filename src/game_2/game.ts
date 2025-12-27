@@ -1,5 +1,5 @@
 import { cubeKey, parseCubeKey, generateHexagon, type Cube, type CubeKey } from '../lib/hexlib';
-import {tickThermo, type HexMapE, type Sink, type Source, type Shield, type Probe, type TickResult } from './hex_tick';
+import {tickThermo, type HexMapE, type Sink, type Source, type Shield, type Probe, type TickResult, type CapacitorState } from './hex_tick';
 
 export type EntityType = 'source' | 'sink' | 'shield' | 'probe' | 'empty';
 
@@ -54,6 +54,9 @@ export class ThermoGame {
     public probeThrottles: Map<number, number> = new Map();
     public totalEnergyCollected: Map<number, number> = new Map();
     public lastTickEnergy: Map<number, number> = new Map();
+    public lastCapacitorDelta: Map<number, number> = new Map();
+    public lastDeltaE: Map<string, number> = new Map(); // Key: CubeKey
+    public capacitors: Map<number, CapacitorState> = new Map();
     public radius: number = 8;
 
     constructor(initialKeys?: Iterable<CubeKey>, radius?: number) {
@@ -68,6 +71,12 @@ export class ThermoGame {
             this.groupThrottles.set(id, 1.0);
             this.probeThrottles.set(id, 0.0); // Default OFF
             this.totalEnergyCollected.set(id, 0.0);
+            this.capacitors.set(id, {
+                stored: 0,
+                capacity: 1000, 
+                drainRate: 0.5,
+                surchargeCost: 500
+            });
         });
     }
 
@@ -108,9 +117,16 @@ export class ThermoGame {
                 baseConductivity: this.baseConductivity,
                 throttles: this.groupThrottles,
                 disabledShieldGroups: this.disabledShieldGroups,
-                probeThrottles: this.probeThrottles
+                probeThrottles: this.probeThrottles,
+                capacitors: this.capacitors
             }
         );
+
+        // Calculate Temperature Deltas
+        for (const [k, newTemp] of res.E) {
+            const oldTemp = this.E.get(k) || 0;
+            this.lastDeltaE.set(k, newTemp - oldTemp);
+        }
 
         this.E = res.E;
         this.tickCount++;
@@ -132,6 +148,27 @@ export class ThermoGame {
         
         // Store per-tick energy for UI
         this.lastTickEnergy = res.energyCollected;
+
+        if (res.updatedCapacitors) {
+            // Calculate deltas before updating
+            for (const [id, nextCap] of res.updatedCapacitors) {
+                const prevCap = this.capacitors.get(id);
+                const prevStored = prevCap ? prevCap.stored : 0;
+                this.lastCapacitorDelta.set(id, nextCap.stored - prevStored);
+            }
+            this.capacitors = res.updatedCapacitors;
+        }
+    }
+
+    public dischargeBank(groupId: number): boolean {
+        const cap = this.capacitors.get(groupId);
+        if (!cap) return false;
+        
+        if (cap.stored >= cap.surchargeCost) {
+            cap.stored -= cap.surchargeCost;
+            return true;
+        }
+        return false;
     }
 
     public toggleShieldGroup(groupId: number) {
@@ -187,7 +224,19 @@ export class ThermoGame {
         // Only saving entities as requested
         const data = {
             radius: this.radius,
-            entities: Array.from(this.entities.entries())
+            entities: Array.from(this.entities.entries()),
+            // New fields
+            groupThrottles: Array.from(this.groupThrottles.entries()),
+            probeThrottles: Array.from(this.probeThrottles.entries()),
+            capacitors: Array.from(this.capacitors.entries()).map(([id, cap]) => ({
+                id,
+                // Exclude 'stored', only save config
+                config: {
+                    capacity: cap.capacity,
+                    drainRate: cap.drainRate,
+                    surchargeCost: cap.surchargeCost
+                }
+            }))
         };
         return JSON.stringify(data);
     }
@@ -222,6 +271,29 @@ export class ThermoGame {
                     // Let's assume the saved entities match the radius.
                     if (this.E.has(key)) {
                         this.entities.set(key, ent);
+                    }
+                }
+            }
+
+            // 3. Restore Throttles
+            if (data.groupThrottles && Array.isArray(data.groupThrottles)) {
+                this.groupThrottles = new Map(data.groupThrottles);
+            }
+            if (data.probeThrottles && Array.isArray(data.probeThrottles)) {
+                this.probeThrottles = new Map(data.probeThrottles);
+            }
+
+            // 4. Restore Capacitor Configs
+            if (data.capacitors && Array.isArray(data.capacitors)) {
+                for (const item of data.capacitors) {
+                    if (item && item.config) {
+                        const existing = this.capacitors.get(item.id);
+                        if (existing) {
+                            existing.capacity = item.config.capacity;
+                            existing.drainRate = item.config.drainRate;
+                            existing.surchargeCost = item.config.surchargeCost;
+                            // Stored remains whatever it was (reset to default or 0)
+                        }
                     }
                 }
             }

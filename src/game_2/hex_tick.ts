@@ -12,6 +12,13 @@ import {type Cube, CUBE_DIRS, cubeKey, type CubeKey, parseCubeKey} from "../lib/
 
 export type HexMapE = Map<CubeKey, number>;
 
+export interface CapacitorState {
+    stored: number;
+    capacity: number;
+    drainRate: number;
+    surchargeCost: number;
+}
+
 export interface Source {
     pos: Cube;
     /** energy injected each tick while active */
@@ -100,6 +107,12 @@ export interface TickParams {
      * If missing, assumes 0.0 (OFF).
      */
     probeThrottles?: Map<number, number>;
+
+    /**
+     * Capacitor states for probe groups. Map<groupId, CapacitorState>.
+     * If provided, logic will fill/drain them and zero-throttle if full.
+     */
+    capacitors?: Map<number, CapacitorState>;
 }
 
 export interface TickResult {
@@ -111,6 +124,8 @@ export interface TickResult {
     heatDumped: number;
     /** Energy collected by probes per group */
     energyCollected: Map<number, number>;
+    /** Updated capacitor states */
+    updatedCapacitors: Map<number, CapacitorState>;
 }
 
 /**
@@ -133,7 +148,41 @@ export function tickThermo(
     const baseK = params.baseConductivity ?? 1.0;
     const throttles = params.throttles;
     const disabledShields = params.disabledShieldGroups;
-    const probeThrottles = params.probeThrottles;
+    // We will build "effective" probe throttles based on capacitor state
+    const inputProbeThrottles = params.probeThrottles; 
+    const capacitors = params.capacitors;
+
+    // --- 0) Capacitor Logic ---
+    const updatedCapacitors = new Map<number, CapacitorState>();
+    const effectiveProbeThrottles = new Map<number, number>();
+
+    // Copy input throttles first
+    if (inputProbeThrottles) {
+        for (const [g, t] of inputProbeThrottles) effectiveProbeThrottles.set(g, t);
+    }
+
+    if (capacitors) {
+        for (const [groupId, cap] of capacitors) {
+            // Clone state
+            const nextCap = { ...cap };
+
+            // Check if full (BEFORE drain, to enforce stop-at-full)
+            if (nextCap.stored >= nextCap.capacity) {
+                effectiveProbeThrottles.set(groupId, 0);
+            }
+
+            // Drain (always happens)
+            nextCap.stored = Math.max(0, nextCap.stored - nextCap.drainRate);
+
+            // If we were full, we might have dropped below capacity now.
+            // But we already set the throttle to 0 for THIS tick.
+            
+            // Re-clamp just in case (though drain reduces it)
+            if (nextCap.stored > nextCap.capacity) nextCap.stored = nextCap.capacity;
+
+            updatedCapacitors.set(groupId, nextCap);
+        }
+    }
 
     // Clone E into a working map (we'll build nextE)
     const nextE: HexMapE = new Map();
@@ -260,8 +309,19 @@ export function tickThermo(
     }
 
     for (const [groupId, keyList] of probeGroups.entries()) {
-        const throttle = probeThrottles?.get(groupId) ?? 0.0;
-        if (throttle <= 0) continue;
+        const throttle = effectiveProbeThrottles.get(groupId) ?? 0.0;
+        if (throttle <= 0) {
+            continue;
+        }
+
+        // Check capacitor room to limit collection
+        let maxWorkAllowed = Infinity;
+        if (updatedCapacitors.has(groupId)) {
+            const cap = updatedCapacitors.get(groupId)!;
+            const room = cap.capacity - cap.stored;
+            if (room <= 0) continue; // Should be handled by throttle=0 check, but safe to keep
+            maxWorkAllowed = room;
+        }
 
         // 1. Calculate Mean
         let totalE = 0;
@@ -292,7 +352,14 @@ export function tickThermo(
 
         // 3. Move Heat
         // We move a fraction of the excess towards the mean
-        const qMove = totalExcess * throttle * PROBE_TRANSFER_RATE;
+        let qMove = totalExcess * throttle * PROBE_TRANSFER_RATE;
+
+        // Clamp qMove based on maxWorkAllowed
+        // Work = qMove * EFF -> qMove = Work / EFF
+        const maxQMove = maxWorkAllowed / ENGINE_EFFICIENCY;
+        if (qMove > maxQMove) {
+            qMove = maxQMove;
+        }
 
         // 4. Extract Work
         const work = qMove * ENGINE_EFFICIENCY;
@@ -317,6 +384,13 @@ export function tickThermo(
         }
 
         energyCollected.set(groupId, work);
+        
+        // Update capacitor if present
+        if (updatedCapacitors.has(groupId)) {
+            const cap = updatedCapacitors.get(groupId)!;
+            cap.stored = Math.min(cap.capacity, cap.stored + work);
+            // Re-check full state? It won't affect *this* tick's throttle, but next tick's.
+        }
     }
 
     // Small numeric cleanup (optional)
@@ -325,8 +399,9 @@ export function tickThermo(
         nextE.set(k, Math.abs(v) < 1e-12 ? 0 : v);
     }
     
-    return { E: nextE, sinks: nextSinks, heatDumped, energyCollected };
+    return { E: nextE, sinks: nextSinks, heatDumped, energyCollected, updatedCapacitors };
 }
+
 
 // ------------------ helpers ------------------
 

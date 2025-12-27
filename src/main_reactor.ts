@@ -57,8 +57,8 @@ function mountLayout(app: HTMLElement) {
       <div id="shield-controls" style="margin-bottom:10px;"></div>
 
       <hr style="border-color:#444; width:100%;" />
-      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">PROBE CONTROLS</div>
-      <div id="probe-controls" style="margin-bottom:10px;"></div>
+      <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">CAPACITOR BANKS & PROBES</div>
+      <div id="capacitor-controls" style="margin-bottom:10px;"></div>
 
       <hr style="border-color:#444; width:100%;" />
 
@@ -155,6 +155,27 @@ function renderFrame(game: ThermoGame, hexGrid: HexGrid, state: AppState) {
     if (rateLbl) {
         const rate = (game.lastTickEnergy.get(id) ?? 0).toFixed(2);
         rateLbl.textContent = `+${rate}/t`;
+    }
+  }
+
+  updateCapacitorUI(game);
+  updateSourceList(game); // Update dynamic source list
+  for (const id of [1, 2, 3, 4]) {
+    // Total -> Capacitor Stored
+    const lbl = document.getElementById(`lbl-probe-total-${id}`);
+    const cap = game.capacitors.get(id);
+    if (lbl && cap) lbl.textContent = (cap.stored).toFixed(0);
+
+    // Rate -> Capacitor Delta
+    const rateLbl = document.getElementById(`lbl-probe-rate-${id}`);
+    if (rateLbl) {
+        // Delta
+        const delta = (game.lastCapacitorDelta.get(id) ?? 0);
+        const sign = delta >= 0 ? '+' : '';
+        rateLbl.textContent = `${sign}${delta.toFixed(2)}/t`;
+        
+        // Color code delta
+        rateLbl.style.color = delta > 0 ? '#8f8' : (delta < 0 ? '#f88' : '#aaa');
     }
   }
 }
@@ -532,32 +553,40 @@ function initPalette(state: AppState) {
 
 function initSourceControls(game: ThermoGame, state: AppState, requestRender: () => void) {
   const container = mustGetEl<HTMLDivElement>('source-controls');
-  container.style.display = 'grid';
-  container.style.gridTemplateColumns = '1fr 1fr';
-  container.style.gap = '5px';
-
+  container.innerHTML = ''; // Clear for re-init
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '8px';
+  
   for (const groupId of [1, 2, 3, 4]) {
     const wrap = document.createElement('div');
     wrap.style.background = '#282828';
-    wrap.style.padding = '4px';
+    wrap.style.padding = '5px';
     wrap.style.border = '1px solid #444';
 
+    // Get current value
+    const throttle = game.groupThrottles.get(groupId) ?? 0.0;
+    const pct = Math.round(throttle * 100);
+
+    // Header: Label + Pct
     const header = document.createElement('div');
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
     header.style.marginBottom = '2px';
     header.innerHTML = `
-      <span style="font-size:0.8em; color:#aaa;">🔆 ${groupId}</span>
-      <span id="lbl-grp-${groupId}" style="font-size:0.8em; color:#fff;">100%</span>
+      <span style="font-size:0.9em; color:#aaa; font-weight:bold;">GROUP ${groupId}</span>
+      <span id="lbl-grp-${groupId}" style="font-size:0.9em; color:#fff;">${pct}%</span>
     `;
 
+    // Slider
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.min = '0';
     slider.max = '100';
-    slider.value = '0';
+    slider.value = String(pct);
     slider.style.width = '100%';
     slider.style.cursor = 'pointer';
+    slider.style.marginBottom = '5px';
 
     slider.oninput = () => {
       const val = parseInt(slider.value, 10);
@@ -566,14 +595,104 @@ function initSourceControls(game: ThermoGame, state: AppState, requestRender: ()
       if (!state.isPlaying) requestRender();
     };
 
+    // Source List Container (Specific to this group)
+    const list = document.createElement('div');
+    list.id = `source-list-group-${groupId}`;
+    list.style.fontSize = '0.8em';
+    list.style.color = '#aaa';
+    list.style.minHeight = '10px'; // ensure not completely collapsed
+    
     wrap.appendChild(header);
     wrap.appendChild(slider);
+    wrap.appendChild(list);
     container.appendChild(wrap);
   }
 }
 
+function updateSourceList(game: ThermoGame) {
+    // 1. Gather active sources grouped by ID
+    const sourcesByGroup = new Map<number, SourceEntity[]>();
+    for (const ent of game.entities.values()) {
+        if (ent.type === 'source') {
+            const s = ent as SourceEntity;
+            const g = s.groupId || 1;
+            if (!sourcesByGroup.has(g)) sourcesByGroup.set(g, []);
+            sourcesByGroup.get(g)!.push(s);
+        }
+    }
+
+    // 2. Update each group list
+    for (const groupId of [1, 2, 3, 4]) {
+        const list = document.getElementById(`source-list-group-${groupId}`);
+        if (!list) continue;
+
+        const sources = sourcesByGroup.get(groupId) || [];
+        
+        if (sources.length === 0) {
+            list.innerHTML = `<div style="padding:2px; font-style:italic; color:#555;">No sources</div>`;
+            continue;
+        }
+
+        // Map existing rows
+        const rows = new Map<string, HTMLElement>();
+        list.querySelectorAll('.src-row').forEach(el => {
+           const k = el.getAttribute('data-key');
+           if (k) rows.set(k, el as HTMLElement);
+        });
+
+        const seen = new Set<string>();
+
+        // Sort by key for stability? Or just render order.
+        sources.sort((a,b) => cubeKey(a.pos).localeCompare(cubeKey(b.pos)));
+
+        for (const s of sources) {
+            const key = cubeKey(s.pos);
+            seen.add(key);
+
+            const temp = game.E.get(key) ?? 0;
+            const delta = game.lastDeltaE.get(key) ?? 0;
+            const color = getTempColor(temp);
+            const activeColor = s.active ? '#ddd' : '#777';
+            const statusSym = s.active ? '●' : '○';
+
+            const sign = delta >= 0 ? '+' : '';
+            const deltaColor = delta > 0.1 ? '#f88' : (delta < -0.1 ? '#aaf' : '#666');
+
+            let row = rows.get(key);
+            if (!row) {
+                row = document.createElement('div');
+                row.className = 'src-row';
+                row.setAttribute('data-key', key);
+                row.style.display = 'flex';
+                row.style.justifyContent = 'space-between';
+                row.style.alignItems = 'center';
+                row.style.background = '#00000030';
+                row.style.padding = '2px 4px';
+                row.style.marginTop = '1px';
+                row.style.borderRadius = '2px';
+                list.appendChild(row);
+            }
+
+            row.innerHTML = `
+                <span style="color:${activeColor};" title="${s.active ? 'Active' : 'Inactive'}">${statusSym} ${key}</span>
+                <span style="color:#aaa;">P:${s.power}</span>
+                <div style="display:flex; flex-direction:column; align-items:flex-end;">
+                    <span style="color:${color}; line-height:1em;">${temp.toFixed(0)}°</span>
+                    <span style="color:${deltaColor}; font-size:0.7em; line-height:1em;">${sign}${delta.toFixed(1)}/t</span>
+                </div>
+            `;
+        }
+
+        // Remove stale
+        for (const [k, el] of rows) {
+            if (!seen.has(k)) el.remove();
+        }
+    }
+}
+
 function initShieldControls(game: ThermoGame, requestRender: () => void) {
   const container = mustGetEl<HTMLDivElement>('shield-controls');
+  container.innerHTML = '';
   container.style.display = 'grid';
   container.style.gridTemplateColumns = 'repeat(4, 1fr)';
   container.style.gap = '5px';
@@ -605,60 +724,183 @@ function initShieldControls(game: ThermoGame, requestRender: () => void) {
   }
 }
 
-function initProbeControls(game: ThermoGame, state: AppState, requestRender: () => void) {
-  const container = mustGetEl<HTMLDivElement>('probe-controls');
-  container.style.display = 'grid';
-  container.style.gridTemplateColumns = '1fr 1fr';
-  container.style.gap = '5px';
+
+function initCapacitorControls(game: ThermoGame, requestRender: () => void) {
+  const container = mustGetEl<HTMLDivElement>('capacitor-controls');
+  container.innerHTML = ''; // Clear for re-init
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '8px';
 
   for (const groupId of [1, 2, 3, 4]) {
+    const cap = game.capacitors.get(groupId);
+    if (!cap) continue;
+
     const wrap = document.createElement('div');
-    wrap.style.background = '#282828';
-    wrap.style.padding = '4px';
+    wrap.style.background = '#222';
+    wrap.style.padding = '5px';
     wrap.style.border = '1px solid #444';
+    wrap.style.fontSize = '0.85em';
 
-    const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.justifyContent = 'space-between';
-    header.style.marginBottom = '2px';
-    header.innerHTML = `
-      <span style="font-size:0.8em; color:#aaa;">🌡${groupId}</span>
-      <span id="lbl-probe-val-${groupId}" style="font-size:0.8em; color:#fff;">0%</span>
+    // ------------------------------------------------------------
+    // 1. Header: Bank Title + Probe Toggle/Slider + Cap Stats
+    // ------------------------------------------------------------
+    
+    // Get current throttle
+    const throttle = game.probeThrottles.get(groupId) ?? 0.0;
+    const pct = Math.round(throttle * 100);
+
+    const head = document.createElement('div');
+    head.style.display = 'flex';
+    head.style.justifyContent = 'space-between';
+    head.style.marginBottom = '4px';
+    head.style.alignItems = 'center';
+    
+    head.innerHTML = `
+      <div style="display:flex; flex-direction:column;">
+        <span style="color:#aaa; font-weight:bold;">BANK ${groupId}</span>
+        <span id="lbl-probe-val-${groupId}" style="color:#8f8; font-size:0.9em;">Probe: ${pct}%</span>
+      </div>
+      <div style="text-align:right;">
+         <span id="lbl-cap-val-${groupId}" style="color:#fff;">${cap.stored.toFixed(0)} / ${cap.capacity}</span>
+      </div>
     `;
+    wrap.appendChild(head);
 
+    // ------------------------------------------------------------
+    // 2. Probe Throttle Slider (Full width)
+    // ------------------------------------------------------------
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.min = '0';
     slider.max = '100';
-    slider.value = '100';
+    slider.value = String(pct);
     slider.style.width = '100%';
     slider.style.cursor = 'pointer';
-
+    slider.style.marginBottom = '4px';
     slider.oninput = () => {
-      const val = parseInt(slider.value, 10);
-      game.probeThrottles.set(groupId, val / 100);
-      setText(`lbl-probe-val-${groupId}`, `${val}%`);
-      if (!state.isPlaying) requestRender();
+       const val = parseInt(slider.value, 10);
+       game.probeThrottles.set(groupId, val / 100);
+       // Update label immediately
+       const lbl = document.getElementById(`lbl-probe-val-${groupId}`);
+       if (lbl) lbl.textContent = `Probe: ${val}%`;
+       if (!state.isPlaying) requestRender();
+    };
+    wrap.appendChild(slider);
+
+    // Progress Bar
+    const barParams = { id: `prog-cap-${groupId}`, height: '6px', color: '#4d4' };
+    const bar = document.createElement('div');
+    bar.style.width = '100%';
+    bar.style.height = barParams.height;
+    bar.style.background = '#000';
+    bar.style.marginTop = '2px';
+    bar.style.marginBottom = '4px';
+    bar.innerHTML = `<div id="${barParams.id}" style="width:0%; height:100%; background:${barParams.color}; transition: width 0.1s;"></div>`;
+    wrap.appendChild(bar);
+
+    // ------------------------------------------------------------
+    // 4. Controls Row (Discharge + Config)
+    // ------------------------------------------------------------
+    const controls = document.createElement('div');
+    controls.style.display = 'flex';
+    controls.style.gap = '4px';
+    controls.style.alignItems = 'center';
+
+    // Discharge Button
+    const btn = document.createElement('button');
+    btn.textContent = '⚡';
+    btn.title = 'Discharge (Surcharge)';
+    btn.style.width = '24px';
+    btn.style.height = '24px';
+    btn.style.padding = '0';
+    btn.style.cursor = 'pointer';
+    btn.style.background = '#d84';
+    btn.style.border = '1px solid #a62';
+    btn.onclick = () => {
+        if (game.dischargeBank(groupId)) {
+            requestRender();
+        } else {
+            console.log('Not enough energy to discharge');
+        }
+    };
+    controls.appendChild(btn);
+
+    // Stats (Total/Rate) - Mini display next to discharge? 
+    // Or maybe put stats in between bar and controls?
+    // Let's add a small stats row above controls.
+    
+    const stats = document.createElement('div');
+    stats.style.display = 'flex';
+    stats.style.justifyContent = 'space-between';
+    stats.style.fontSize = '0.75em';
+    stats.style.color = '#888';
+    stats.style.marginBottom = '2px';
+    // Repurposed IDs: "total" -> Cap Stored, "rate" -> Cap Delta
+    stats.innerHTML = `
+      <span>Cap: <span id="lbl-probe-total-${groupId}" style="color:#ccc;">0</span></span>
+      <span id="lbl-probe-rate-${groupId}" style="color:#ccc;">+0.00/t</span>
+    `;
+    wrap.appendChild(stats);
+
+    // Config Inputs (Cap, Drain, Cost)
+    const addInput = (label: string, val: number, onChange: (v: number) => void) => {
+        const d = document.createElement('div');
+        d.style.flex = '1';
+        d.innerHTML = `<div style="font-size:0.7em; color:#777;">${label}</div>`;
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.value = String(val);
+        inp.style.width = '100%';
+        inp.style.background = '#111';
+        inp.style.border = '1px solid #333';
+        inp.style.color = '#ccc';
+        inp.style.fontSize = '0.8em';
+        inp.onchange = () => {
+            onChange(parseFloat(inp.value));
+            requestRender();
+        };
+        d.appendChild(inp);
+        controls.appendChild(d);
     };
 
-    const total = document.createElement('div');
-    total.style.fontSize = '0.75em';
-    total.style.color = '#8f8';
-    total.style.marginTop = '2px';
-    total.style.display = 'flex';
-    total.style.justifyContent = 'space-between';
-    
-    // Total + Rate
-    total.innerHTML = `
-        <span>Total: <span id="lbl-probe-total-${groupId}">0.0</span></span>
-        <span id="lbl-probe-rate-${groupId}" style="color:#aaa;">+0.00/t</span>
-    `;
+    addInput('Max', cap.capacity, v => {
+        const c = game.capacitors.get(groupId);
+        if (c) c.capacity = v;
+    });
+    addInput('Drain', cap.drainRate, v => {
+        const c = game.capacitors.get(groupId);
+        if (c) c.drainRate = v;
+    });
+    addInput('Cost', cap.surchargeCost, v => {
+        const c = game.capacitors.get(groupId);
+        if (c) c.surchargeCost = v;
+    });
 
-    wrap.appendChild(header);
-    wrap.appendChild(slider);
-    wrap.appendChild(total);
+    wrap.appendChild(controls);
     container.appendChild(wrap);
   }
+}
+
+function updateCapacitorUI(game: ThermoGame) {
+    for (const [id, cap] of game.capacitors) {
+        const prog = document.getElementById(`prog-cap-${id}`);
+        const lbl = document.getElementById(`lbl-cap-val-${id}`);
+        
+        if (prog && lbl) {
+            const pct = Math.min(100, (cap.stored / cap.capacity) * 100);
+            prog.style.width = `${pct}%`;
+            
+            // Visual feedback for full/throttled state
+            if (cap.stored >= cap.capacity) {
+                 prog.style.backgroundColor = '#f44'; // Red if full (throttled)
+            } else {
+                 prog.style.backgroundColor = '#4d4';
+            }
+            
+            lbl.textContent = `${cap.stored.toFixed(0)} / ${cap.capacity}`;
+        }
+    }
 }
 
 // ============================================================
@@ -751,6 +993,14 @@ function wireTopControls(game: ThermoGame, state: AppState, requestRender: () =>
     const json = localStorage.getItem('reactor_layout_v1');
     if (json) {
         game.deserialize(json);
+        
+        // Refresh Controls to reflect loaded state
+        // Re-initialize controls to pick up new values
+        // Ideally we would have updateXXX() methods, but re-init works if we clear container
+        initSourceControls(game, state, requestRender);
+        initShieldControls(game, requestRender);
+        initCapacitorControls(game, requestRender);
+
         requestRender();
         console.log('Layout loaded from localStorage');
     } else {
@@ -777,9 +1027,9 @@ function wireKeyboardShortcuts(game: ThermoGame, state: AppState, requestRender:
   });
 }
 
-// ============================================================
-// Main bootstrap
-// ============================================================
+// ----------------------------------------------------------------------
+// Bootstrap
+// ----------------------------------------------------------------------
 
 const app = mustGetEl<HTMLDivElement>('app');
 mountLayout(app);
@@ -798,36 +1048,39 @@ const state: AppState = {
 
 const requestRender = () => renderFrame(game, hexGrid, state);
 
-const startLoop = () => {
-  // Avoid duplicate RAF loops
-  if (state.rafId !== null) return;
-
-  const loop = () => {
-    if (!state.isPlaying) {
-      state.rafId = null;
-      return;
-    }
-    game.tick();
-    requestRender();
-    state.rafId = requestAnimationFrame(loop);
-  };
-
-  state.rafId = requestAnimationFrame(loop);
-};
-
-const stopLoop = () => {
-  if (state.rafId !== null) cancelAnimationFrame(state.rafId);
-  state.rafId = null;
-};
-
+// Init Controls
 initPalette(state);
 initSourceControls(game, state, requestRender);
 initShieldControls(game, requestRender);
-initProbeControls(game, state, requestRender);
+// initProbeControls(game, state, requestRender); // REMOVED
+initCapacitorControls(game, requestRender); // Unified
 
 wireGridInteractions(game, hexGrid, state, requestRender);
 wireTopControls(game, state, requestRender, startLoop, stopLoop);
 wireKeyboardShortcuts(game, state, requestRender);
 
-// Initial draw
+// Loop
+function loop() {
+  if (!state.isPlaying) return;
+  
+  // Rate limit? Nah, run as fast as possible or fixed step?
+  // Let's do fixed step for simulation stability if needed, or just per-frame
+  game.tick();
+  renderFrame(game, hexGrid, state);
+  
+  state.rafId = requestAnimationFrame(loop);
+}
+
+function startLoop() {
+  if (state.rafId) cancelAnimationFrame(state.rafId);
+  state.rafId = requestAnimationFrame(loop);
+}
+
+function stopLoop() {
+  if (state.rafId) cancelAnimationFrame(state.rafId);
+  state.rafId = null;
+}
+
+// Initial Render
 requestRender();
+
