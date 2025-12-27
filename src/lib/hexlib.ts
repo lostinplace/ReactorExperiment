@@ -342,3 +342,141 @@ export const clippedRange = (center: HexCubeCoord, R: number, coordsSet: Set<Hex
   }
   return out;
 };
+
+
+
+function orient(a: Point, b: Point, c: Point): number {
+  // cross((b-a),(c-a))
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function onSegment(a: Point, b: Point, p: Point): boolean {
+  return (
+    Math.min(a.x, b.x) - EPS <= p.x && p.x <= Math.max(a.x, b.x) + EPS &&
+    Math.min(a.y, b.y) - EPS <= p.y && p.y <= Math.max(a.y, b.y) + EPS &&
+    Math.abs(orient(a, b, p)) <= EPS
+  );
+}
+
+function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  const o1 = orient(a, b, c);
+  const o2 = orient(a, b, d);
+  const o3 = orient(c, d, a);
+  const o4 = orient(c, d, b);
+
+  // general case
+  if ((o1 > EPS && o2 < -EPS || o1 < -EPS && o2 > EPS) &&
+      (o3 > EPS && o4 < -EPS || o3 < -EPS && o4 > EPS)) return true;
+
+  // collinear / touching cases
+  if (Math.abs(o1) <= EPS && onSegment(a, b, c)) return true;
+  if (Math.abs(o2) <= EPS && onSegment(a, b, d)) return true;
+  if (Math.abs(o3) <= EPS && onSegment(c, d, a)) return true;
+  if (Math.abs(o4) <= EPS && onSegment(c, d, b)) return true;
+
+  return false;
+}
+
+function pointInConvexPolygon(p: Point, poly: Point[]): boolean {
+  // Works for convex polygons in CCW or CW order.
+  // Treat boundary as inside (tweak if you want boundary to be non-blocking).
+  let sign = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const o = orient(a, b, p);
+    if (Math.abs(o) <= EPS) continue;
+    const s = o > 0 ? 1 : -1;
+    if (sign === 0) sign = s;
+    else if (sign !== s) return false;
+  }
+  return true;
+}
+
+/**
+ * Returns true if segment AB intersects polygon interior (or boundary, depending on rules).
+ * For LOS blocking, the simplest rule is: if segment intersects ANY edge OR passes through interior => blocked.
+ */
+function segmentIntersectsPolygon(a: Point, b: Point, poly: Point[]): boolean {
+  // edge intersection
+  for (let i = 0; i < poly.length; i++) {
+    const c = poly[i];
+    const d = poly[(i + 1) % poly.length];
+    if (segmentsIntersect(a, b, c, d)) return true;
+  }
+  // segment entirely inside polygon (no edge cross)
+  // check midpoint
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  if (pointInConvexPolygon(mid, poly)) return true;
+
+  return false;
+}
+
+
+function hexCorners(hex: HexCubeCoord, layout: Layout): Point[] {
+  const center = hexToPixel(hex, layout);
+
+  // These names depend on your layout shape.
+  // Common: layout.size = { x: number, y: number }
+  // Common: layout.orientation.startAngle = 0 (pointy) or 0.5 (flat)
+  const sizeX = (layout as any).size?.x ?? (layout as any).size?.X;
+  const sizeY = (layout as any).size?.y ?? (layout as any).size?.Y;
+  const startAngle = (layout as any).orientation?.startAngle ?? 0; // best guess
+
+  if (typeof sizeX !== "number" || typeof sizeY !== "number") {
+    throw new Error("hexCorners: layout.size.x/y not found; use your hexlib corner helper instead.");
+  }
+
+  const corners: Point[] = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = 2 * Math.PI * (startAngle + i) / 6;
+    corners.push({
+      x: center.x + sizeX * Math.cos(angle),
+      y: center.y + sizeY * Math.sin(angle),
+    });
+  }
+  return corners;
+}
+
+export function hexCornerLOS(
+  a: HexCubeCoord,
+  b: HexCubeCoord,
+  layout: Layout,
+  blocked: (h: HexCubeCoord) => boolean,
+  allHexesToConsider: Iterable<HexCubeKey> // typically map.keys()
+): number {
+  const aCorners = hexCorners(a, layout);
+  const bCorners = hexCorners(b, layout);
+
+  // Precompute obstacle polygons
+  const obstacles: Point[][] = [];
+  for (const key of allHexesToConsider) {
+    const h = parseHexCubeKey(key);
+    // don’t treat endpoints as obstacles
+    if ((h.x === a.x && h.y === a.y && h.z === a.z) ||
+        (h.x === b.x && h.y === b.y && h.z === b.z)) {
+      continue;
+    }
+    if (!blocked(h)) continue;
+    obstacles.push(hexCorners(h, layout));
+  }
+
+  // Try all 36 corner-to-corner segments
+  for (const p of aCorners) {
+    for (const q of bCorners) {
+      let hit = false;
+      for (const poly of obstacles) {
+        if (segmentIntersectsPolygon(p, q, poly)) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) {
+        // Found an unobstructed segment
+        return hexDistance(a, b);
+      }
+    }
+  }
+
+  return NaN;
+}

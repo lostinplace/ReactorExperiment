@@ -38,7 +38,20 @@ function mountLayout(app: HTMLElement) {
         <button id="btn-quench" style="background:#44a; color:white;">Quench</button>
       </div>
 
-      <div style="margin:10px 0;">Tick: <span id="tick-count">0</span></div>
+      <div style="margin:10px 0; font-size: 0.9em; display:flex; flex-direction:column; gap:5px;">
+        <div style="display:flex; justify-content:space-between;">
+           <span>Tick: <span id="tick-count">0</span></span>
+           <span style="color:#aaa;">Time: <span id="tick-time">0.00</span>ms</span>
+        </div>
+        
+        <div style="border-top:1px solid #444; padding-top:5px; margin-top:5px;">
+           <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+             <span style="color:#aaa;">Tick Budget</span>
+             <span id="lbl-tick-budget" style="color:#fff;">100ms</span>
+           </div>
+           <input id="inp-tick-budget" type="range" min="0" max="1000" value="100" step="10" style="width:100%; cursor:pointer;">
+        </div>
+      </div>
 
        <hr style="border-color:#444; width:100%;" />
       <div style="font-size:0.85em; color:#aaa; margin-bottom:5px;">SOURCE CONTROLS</div>
@@ -107,6 +120,11 @@ type AppState = {
 
   // Sidebar rebuild heuristics
   lastSidebarSig: SidebarSignature;
+
+  // Time control
+  tickBudgetMs: number;
+  lastTickTime: number;
+  lastTickDuration: number;
 };
 
 // ============================================================
@@ -151,6 +169,7 @@ function renderFrame(game: ThermoGame, hexGrid: HexGrid, state: AppState) {
   hexGrid.render(map, { styleFn: getThermoStyle });
 
   setText('tick-count', String(game.state.tickCount));
+  setText('tick-time', state.lastTickDuration.toFixed(2));
 
   // Sidebar: rebuild structure only when necessary
   // We need to pass a "requestRender" function to updateSidebar so it can be passed to click handlers
@@ -1121,6 +1140,13 @@ function wireTopControls(game: ThermoGame, state: AppState, requestRender: () =>
     console.log('Reactor Quenched');
   };
 
+  const budgetSlider = mustGetEl<HTMLInputElement>('inp-tick-budget');
+  budgetSlider.oninput = () => {
+      const val = parseInt(budgetSlider.value, 10);
+      state.tickBudgetMs = val;
+      setText('lbl-tick-budget', `${val}ms`);
+  };
+
   mustGetEl<HTMLButtonElement>('btn-save').onclick = async () => {
     const json = game.serialize();
     try {
@@ -1226,7 +1252,10 @@ const state: AppState = {
   selectedKey: null,
   isPointerDown: false,
   hoveredKey: null,
-  lastSidebarSig: { selectedKey: null, entityType: 'empty' }
+  lastSidebarSig: { selectedKey: null, entityType: 'empty' },
+  tickBudgetMs: 100, // Default 100ms
+  lastTickTime: 0,
+  lastTickDuration: 0
 };
 
 const requestRender = () => renderFrame(game, hexGrid, state);
@@ -1243,12 +1272,29 @@ wireTopControls(game, state, requestRender, startLoop, stopLoop);
 wireKeyboardShortcuts(game, state, requestRender);
 
 // Loop
-function loop() {
+function loop(timestamp: number) {
   if (!state.isPlaying) return;
   
-  // Rate limit? Nah, run as fast as possible or fixed step?
-  // Let's do fixed step for simulation stability if needed, or just per-frame
-  game.tick();
+  // Throttling logic
+  const elapsed = timestamp - state.lastTickTime;
+  
+  if (elapsed >= state.tickBudgetMs) {
+      // Run tick
+      const t0 = performance.now();
+      game.tick();
+      const t1 = performance.now();
+      
+      state.lastTickDuration = t1 - t0;
+      state.lastTickTime = timestamp; 
+      // If we are way behind, do we jump forward? 
+      // For now, simple "at least N ms" pacing. 
+      // To strictly adhere to a grid, we might adjust lastTickTime differently, 
+      // but "at least N ms" is usually what people mean by a delay/budget.
+      // If we want "fixed rate" we would do: state.lastTickTime += state.tickBudgetMs;
+      // But if the budget is adjustable, "last time we ticked" is safer to prevent catch-up bursts.
+  }
+
+  // Render every frame to keep UI responsive
   renderFrame(game, hexGrid, state);
   
   state.rafId = requestAnimationFrame(loop);
