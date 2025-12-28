@@ -5,7 +5,7 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 export default defineConfig({
 	plugins: [viteSingleFile()],
 	build: {
-		outDir: 'dist-purehtml',
+		outDir: 'docs',
 		assetsInlineLimit: 100000000, // Large number to force inline
 	},
 });
