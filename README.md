@@ -4,8 +4,7 @@ A hexagonal grid simulation game where you manage energy sources, heat sinks, an
 
 ## 🎮 Play Online
 
-[Click here to play the generated HTML build](https://cmwhelan.github.io/game_experiments/)  
-_(Note: Requires GitHub Pages to be enabled in settings pointing to `docs/` folder)_
+[Click here to play the generated HTML build](https://olive-bethina-28.tiiny.site/)
 
 ## 🚀 Getting Started
 
