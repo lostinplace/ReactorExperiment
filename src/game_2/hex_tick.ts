@@ -1,5 +1,14 @@
 // thermo_hex_tick.ts
-import {type HexCubeCoord, HEX_CUBE_DIRS, hexCubeKey, type HexCubeKey, parseHexCubeKey} from "../lib/hexlib.ts";
+import {
+    type HexCubeCoord, HEX_CUBE_DIRS, hexCubeKey, type HexCubeKey, parseHexCubeKey,
+    hexCornerLOS, type Layout, hexRing
+} from "../lib/hexlib.ts";
+
+const LOGIC_LAYOUT: Layout = {
+    size: { x: 1, y: 1 },
+    origin: { x: 0, y: 0 },
+    orientation: 'pointy'
+};
 
 
 export type HexMapE = Map<HexCubeKey, number>;
@@ -39,17 +48,24 @@ export interface SinkEntity extends EntityCommon {
     type: 'sink';
     pullRate: number;
     conductivity: number;
+    heatTolerance?: number; // Default 1400
     groupId: number; // 1-6
 }
 
 export interface ShieldEntity extends EntityCommon {
     type: 'shield';
     conductivity: number;
-    savedTemp?: number;
+    retainedE?: number;
+    heatTolerance?: number; // Default 2000
 }
+
+export const SHIELD_FAILURE_PROBABILITY = 0.05;
+export const SINK_FAILURE_PROBABILITY = 0.05;
+export const PROBE_FAILURE_PROBABILITY = 0.05;
 
 export interface ProbeEntity extends EntityCommon {
     type: 'probe';
+    heatTolerance?: number; // Default 1800
 }
 
 export type Entity = SourceEntity | SinkEntity | ShieldEntity | ProbeEntity;
@@ -74,6 +90,7 @@ export interface SimulationState {
     lastTickEnergy: Map<number, number>;
     lastCapacitorDelta: Map<number, number>;
     lastDeltaE: Map<string, number>;
+    lastPerimeterEnergy: number;
     
     tickCount: number;
     
@@ -98,6 +115,7 @@ export function tickSimulation(state: SimulationState): TickResult {
     // 1. Clone mutable state
     const nextState: SimulationState = {
         ...state,
+        entities: new Map(state.entities),
         E: new Map(state.E),
         capacitors: new Map(),
         reservoirs: new Map(),
@@ -105,6 +123,7 @@ export function tickSimulation(state: SimulationState): TickResult {
         lastTickEnergy: new Map(),
         lastCapacitorDelta: new Map(),
         lastDeltaE: new Map(),
+        lastPerimeterEnergy: 0,
         tickCount: state.tickCount + 1
     };
 
@@ -129,6 +148,133 @@ export function tickSimulation(state: SimulationState): TickResult {
         else if (ent.type === 'sink') sinks.push(ent);
         else if (ent.type === 'shield') shields.push(ent);
         else if (ent.type === 'probe') probes.push(ent);
+    }
+
+    // --- 0.05) Shield Overheat Check ---
+    const newlyDestroyedShields = new Set<HexCubeKey>();
+    for (const sh of shields) {
+        if (sh.destroyed) continue;
+        const key = hexCubeKey(sh.pos);
+        const temp = state.E.get(key) ?? 0;
+        const tolerance = sh.heatTolerance ?? 2000;
+        
+        if (temp > tolerance) {
+            if (Math.random() < SHIELD_FAILURE_PROBABILITY) {
+                // Destroy it
+                const updated = { ...sh, destroyed: true };
+                nextState.entities.set(key, updated);
+                newlyDestroyedShields.add(key);
+            }
+        }
+    }
+
+    // --- 0.06) Sink Overheat Check ---
+    const newlyDestroyedSinks = new Set<HexCubeKey>();
+    for (const s of sinks) {
+        if (s.destroyed) continue;
+        const key = hexCubeKey(s.pos);
+        const temp = state.E.get(key) ?? 0;
+        const tolerance = s.heatTolerance ?? 1400;
+        
+        if (temp > tolerance) {
+            if (Math.random() < SINK_FAILURE_PROBABILITY) {
+                const updated = { ...s, destroyed: true };
+                nextState.entities.set(key, updated);
+                newlyDestroyedSinks.add(key);
+            }
+        }
+    }
+
+    // --- 0.07) Probe Overheat Check ---
+    // Note: Probes can also be destroyed by LOS in step 0.1
+    for (const p of probes) {
+        if (p.destroyed) continue;
+        const key = hexCubeKey(p.pos);
+        const temp = state.E.get(key) ?? 0;
+        const tolerance = p.heatTolerance ?? 1800;
+        
+        if (temp > tolerance) {
+            if (Math.random() < PROBE_FAILURE_PROBABILITY) {
+                const updated = { ...p, destroyed: true };
+                nextState.entities.set(key, updated);
+                // We don't need a newlyDestroyed set for probes unless logic below depends on it?
+                // Step 0.1 checks `p.destroyed` (which refers to OLD state) or `nextState`?
+                // Step 0.1 iterates `probes` (from OLD state).
+                // It then checks `if (p.destroyed)`. 
+                // We need to make sure we update the logic in 0.1 to check if it was JUST destroyed too.
+                // Or just update `p` in the local array? `p` is a reference to the object in `probes` array?
+                // No, `probes` contains objects from `state.entities` (which are refs).
+                // Actually `state.entities` values are objects.
+                // Depending on if `probes` is a copy or ref.
+                // `sources` etc are pushed from `state.entities.values()`.
+                // So `p` is the object in `state.entities`.
+                // But `nextState.entities` are COPIES (if we did shallow copy).
+                // Wait `nextState.entities = new Map(state.entities)` is shallow copy of map (same objects).
+                // But `tickSimulation` usually treats state as immutable-ish?
+                // The `tickSimulation` clones entities at start?
+                // No: `nextState.entities = new Map(state.entities);` -> Map copy, values shared.
+                // If I modify `p` directly, I modify `state`. BAD.
+                // I should assume immutable state updates.
+                
+                // So I set `nextState.entities(key, updated)`.
+                // The loop 0.1 iterates `probes` array (refs to OLD state objects).
+                // It checks `if (p.destroyed)`.
+                // I need to check if it's destroyed in `nextState` too?
+            }
+        }
+    }
+
+    // --- 0.1) Probe Destruction (LOS Check) ---
+    // Only active, undestroyed shields block LOS
+    const shieldKeys = new Set<HexCubeKey>();
+    for (const sh of shields) {
+        // use status from nextState just in case it was destroyed just now
+        const key = hexCubeKey(sh.pos);
+        if (newlyDestroyedShields.has(key) || sh.destroyed) continue;
+
+        const isDisabled = sh.groupId !== undefined && state.disabledShieldGroups.has(sh.groupId);
+        if (!isDisabled) {
+            shieldKeys.add(key);
+        }
+    }
+    const isBlocked = (h: HexCubeCoord) => shieldKeys.has(hexCubeKey(h));
+
+    const destroyedProbeKeys = new Set<HexCubeKey>();
+
+    for (const p of probes) {
+        const key = hexCubeKey(p.pos);
+        // Check if already destroyed (in input state OR just destroyed by overheat)
+        const nextEnt = nextState.entities.get(key);
+        if (nextEnt?.destroyed) {
+            destroyedProbeKeys.add(key);
+            continue;
+        }
+
+        if (p.destroyed) {
+            destroyedProbeKeys.add(key);
+            continue;
+        }
+
+        let hit = false;
+        // Check vs all active sources
+        for (const s of sources) {
+            if (!s.active) continue;
+            
+            // Check LOS
+            // hexCornerLOS returns distance (number) if seen, NaN if blocked.
+            const dist = hexCornerLOS(p.pos, s.pos, LOGIC_LAYOUT, isBlocked, shieldKeys);
+            if (!Number.isNaN(dist)) {
+                hit = true;
+                break;
+            }
+        }
+
+        if (hit) {
+            // Mark destroyed in nextState
+            const key = hexCubeKey(p.pos);
+            nextState.entities.set(key, { ...p, destroyed: true });
+            destroyedProbeKeys.add(key);
+        }
     }
 
     // --- 0.2) Capacitor Logic ---
@@ -286,6 +432,9 @@ export function tickSimulation(state: SimulationState): TickResult {
 
     const probeGroups = new Map<number, HexCubeKey[]>();
     for (const p of probes) {
+        const key = hexCubeKey(p.pos);
+        if (destroyedProbeKeys.has(key)) continue;
+
         const gid = p.groupId ?? 1;
         if (!probeGroups.has(gid)) probeGroups.set(gid, []);
         probeGroups.get(gid)!.push(hexCubeKey(p.pos));
@@ -371,6 +520,15 @@ export function tickSimulation(state: SimulationState): TickResult {
         const cur = nextState.totalEnergyCollected.get(gid) ?? 0;
         nextState.totalEnergyCollected.set(gid, cur + amt);
     }
+
+    // Calculate Perimeter Energy (Exposure)
+    let perimeterSum = 0;
+    const ring = hexRing([0,0,0], state.radius);
+    for (const h of ring) {
+        const k = hexCubeKey(h);
+        perimeterSum += nextState.E.get(k) ?? 0;
+    }
+    nextState.lastPerimeterEnergy = perimeterSum;
 
     return { energyCollected, nextState };
 }

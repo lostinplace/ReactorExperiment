@@ -1,4 +1,4 @@
-import { parseHexCubeKey, type HexCubeKey } from '../lib/hexlib';
+import { parseHexCubeKey, type HexCubeKey, generateHexagon, hexCubeKey } from '../lib/hexlib';
 import {
     tickSimulation, 
     type SimulationState, 
@@ -21,6 +21,7 @@ export class ThermoGame {
             lastTickEnergy: new Map(),
             lastCapacitorDelta: new Map(),
             lastDeltaE: new Map(),
+            lastPerimeterEnergy: 0,
             tickCount: 0,
             radius: radius,
             diffusionAlpha: 0.1,
@@ -80,18 +81,19 @@ export class ThermoGame {
             this.state.disabledShieldGroups.delete(groupId);
             for (const [k, e] of this.state.entities) {
                 if (e.type === 'shield' && e.groupId === groupId) {
-                    if (e.savedTemp !== undefined) {
-                        this.state.E.set(k, e.savedTemp);
-                        e.savedTemp = undefined;
+                    if (e.retainedE !== undefined) {
+                        this.state.E.set(k, e.retainedE);
+                        e.retainedE = undefined;
                     }
                 }
             }
         } else {
-            // Disabling: Save temp
+            // Disabling: Save temp AND Zero out
             this.state.disabledShieldGroups.add(groupId);
             for (const [k, e] of this.state.entities) {
                 if (e.type === 'shield' && e.groupId === groupId) {
-                    e.savedTemp = this.state.E.get(k) || 0;
+                    e.retainedE = this.state.E.get(k) || 0;
+                    this.state.E.set(k, 0); // Clear heat
                 }
             }
         }
@@ -110,13 +112,13 @@ export class ThermoGame {
                 ent = { type: 'source', pos, power: 10, active: true, minActivation: 0, groupId: 1 };
                 break;
             case 'sink':
-                ent = { type: 'sink', pos, pullRate: 0.1, conductivity: 0.8, groupId: 1 };
+                ent = { type: 'sink', pos, pullRate: 0.1, conductivity: 0.8, groupId: 1, heatTolerance: 1400 };
                 break;
             case 'shield':
-                ent = { type: 'shield', pos, conductivity: 0.0001, groupId: 1 };
+                ent = { type: 'shield', pos, conductivity: 0.0001, groupId: 1, heatTolerance: 2000 };
                 break;
             case 'probe':
-                ent = { type: 'probe', pos, groupId: 1 };
+                ent = { type: 'probe', pos, groupId: 1, heatTolerance: 1800 };
                 break;
         }
         this.state.entities.set(key, ent);
@@ -229,6 +231,60 @@ export class ThermoGame {
         } catch (e) {
             console.error("Failed to load layout", e);
         }
+    }
+
+    public clear() {
+        this.state.entities.clear();
+        this.state.E.clear();
+        
+        // Re-initialize E cells based on radius
+        // This ensures the board exists (as E keys define the playable area)
+        const radius = this.state.radius || 8;
+        const cubes = generateHexagon(radius);
+        for (const c of cubes) {
+            this.state.E.set(hexCubeKey(c), 0);
+        }
+        
+        // Reset Capacitors
+        this.state.capacitors.clear();
+        for (const i of [1, 2, 3, 4]) {
+            this.state.totalEnergyCollected.set(i, 0.0);
+            this.state.capacitors.set(i, {
+                id: i,
+                stored: 0,
+                capacity: 1000,
+                drainRate: 1,
+                surchargeCost: 500
+            });
+        }
+
+        // Reset Reservoirs
+        this.state.reservoirs.clear();
+        for (const i of [1, 2, 3, 4, 5, 6]) {
+            this.state.reservoirs.set(i, {
+                id: i,
+                heat: 0,
+                volume: 5000,
+                radiator: { deployed: false, strength: 50 }
+            });
+        }
+        
+        // Reset Throttles
+        this.state.groupThrottles.clear();
+        this.state.probeThrottles.clear();
+        for (const i of [1, 2, 3, 4]) {
+            this.state.groupThrottles.set(i, 1.0);
+            this.state.probeThrottles.set(i, 0.0);
+        }
+
+        this.state.disabledShieldGroups.clear();
+        this.state.tickCount = 0;
+        this.state.lastPerimeterEnergy = 0;
+        
+        // Reset internal trackers
+        this.state.lastTickEnergy.clear();
+        this.state.lastCapacitorDelta.clear();
+        this.state.lastDeltaE.clear();
     }
 }
 

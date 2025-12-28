@@ -141,7 +141,7 @@ export function trunc_n(val: string | number, n = 3): string {
       // try removing decimals if present
       if (out.includes('.')) {
           // remove fractional part
-           const [i, f] = formattedDigits.split('.');
+           const [i] = formattedDigits.split('.');
            out = sign + i + prefix;
       }
       

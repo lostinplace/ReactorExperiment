@@ -106,6 +106,12 @@ export class HexGrid {
                 inner = el.firstElementChild as HTMLElement;
             }
 
+            // Always update position (in case layout changed)
+            const h = parseHexCubeKey(key);
+            const pixel = hexToPixel(h, this.layout);
+            el.style.left = `${pixel.x}px`;
+            el.style.top = `${pixel.y}px`;
+
             // Update Content
             if (state.value) {
                 let displayText = trunc_n(state.value, 5);

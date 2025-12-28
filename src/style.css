@@ -88,3 +88,29 @@ body {
   content: "🚩";
   font-size: 16px;
 }
+
+.probe-cell-destroyed {
+    opacity: 0.6;
+    filter: grayscale(100%);
+}
+
+.disabled-shield-cell {
+    opacity: 0.3;
+    border: 1px dashed #555;
+    color: #777;
+}
+
+.shield-cell-destroyed {
+    background-color: #311;
+    opacity: 0.8;
+    border: 2px solid #522;
+    color: #a55;
+    filter: sepia(0.5);
+}
+
+.sink-cell-destroyed {
+    background-color: #222;
+    opacity: 0.8;
+    border: 2px solid #822; /* Dark Red */
+    color: #e55;
+}

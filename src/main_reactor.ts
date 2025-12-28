@@ -4,6 +4,7 @@ import { type SinkEntity, type SourceEntity, type ShieldEntity, type ProbeEntity
 import { getThermoStyle, mapThermoToHexGrid } from './game_2/render';
 import { HexGrid } from './ui/hex_grid';
 import { hexCubeKey, type HexCubeKey, generateHexagon, type Layout } from './lib/hexlib';
+import defaultLayout from './game_2/config/reactor_layout.json';
 
 // ============================================================
 // DOM helpers
@@ -73,6 +74,22 @@ function mountLayout(app: HTMLElement) {
     <!-- MAIN VIEW -->
     <div id="reactor-main" style="flex:1; position:relative; background:#111; overflow:hidden;">
       <div id="game-board" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>
+      
+      <!-- HUD -->
+      <div style="position:absolute; top:10px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); padding:5px 15px; border-radius:15px; border:1px solid #444; color:#fff; font-family:monospace; pointer-events:none;">
+        PERIMETER EXPOSURE: <span id="val-perimeter" style="font-weight:bold; color:#f88;">0.00</span>
+      </div>
+
+      <!-- INSTRUCTIONS LEGEND -->
+      <div style="position:absolute; bottom:10px; right:10px; background:rgba(0,0,0,0.7); padding:10px; border-radius:8px; border:1px solid #444; color:#ccc; font-size:0.85em; font-family:sans-serif; pointer-events:none; max-width:280px; z-index:20;">
+        <div style="font-weight:bold; color:#fff; margin-bottom:5px; border-bottom:1px solid #555; padding-bottom:3px;">Mechanics & Controls</div>
+        <ul style="margin:0; padding-left:16px; list-style-type:square; line-height:1.4em;">
+           <li><b>Source Throttle (Left):</b> Increases output.</li>
+           <li><b>Probes:</b> Destroyed by direct source exposure (LOS).</li>
+           <li><b>Grouping:</b> Hover entity + Press <b>1-6</b>.</li>
+           <li><b>Shields:</b> Toggle via control buttons.</li>
+        </ul>
+      </div>
     </div>
 
     <!-- RIGHT SIDEBAR: EDITOR -->
@@ -80,8 +97,9 @@ function mountLayout(app: HTMLElement) {
       <h2 style="margin-top:0;">Construction</h2>
 
       <div class="panel-section" style="display:flex; gap:8px; margin-bottom:10px; width:100%;">
-        <button id="btn-save" style="flex:1; background:#444;">Save Layout</button>
-        <button id="btn-load" style="flex:1; background:#444;">Load Layout</button>
+        <button id="btn-save" style="flex:1; background:#444;">Save</button>
+        <button id="btn-load" style="flex:1; background:#444;">Load</button>
+        <button id="btn-clear" style="flex:1; background:#622;">Clear</button>
       </div>
 
       <hr style="border-color:#444; width:100%;" />
@@ -151,7 +169,7 @@ function createGameAndGrid() {
   const boardEl = mustGetEl<HTMLDivElement>('game-board');
   const hexGrid = new HexGrid(boardEl, layout);
 
-  return { game, hexGrid };
+  return { game, hexGrid, layout };
 }
 
 // ============================================================
@@ -170,6 +188,7 @@ function renderFrame(game: ThermoGame, hexGrid: HexGrid, state: AppState) {
 
   setText('tick-count', String(game.state.tickCount));
   setText('tick-time', state.lastTickDuration.toFixed(2));
+  setText('val-perimeter', game.state.lastPerimeterEnergy.toFixed(2));
 
   // Sidebar: rebuild structure only when necessary
   // We need to pass a "requestRender" function to updateSidebar so it can be passed to click handlers
@@ -298,6 +317,7 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
         const s = ent as SinkEntity;
         detail.appendChild(createNumInput('Pull Rate', s.pullRate, v => (s.pullRate = Math.min(1, Math.max(0, v))), 0.01, 'inp-pull'));
         detail.appendChild(createNumInput('Conductivity', s.conductivity, v => (s.conductivity = v), 0.1, 'inp-cond'));
+        detail.appendChild(createNumInput('Tolerance', s.heatTolerance ?? 1400, v => (s.heatTolerance = v), 100, 'inp-tol'));
         
         detail.appendChild(
           createNumInput(
@@ -326,6 +346,7 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
       if (ent.type === 'shield') {
         const s = ent as ShieldEntity;
         detail.appendChild(createNumInput('Conductivity', s.conductivity, v => (s.conductivity = v), 0.01, 'inp-cond'));
+        detail.appendChild(createNumInput('Tolerance', s.heatTolerance ?? 2000, v => (s.heatTolerance = v), 10, 'inp-tol'));
         detail.appendChild(
           createNumInput(
             'Group ID',
@@ -342,6 +363,8 @@ function rebuildSidebar(game: ThermoGame, state: AppState, requestRender: () => 
       if (ent.type === 'probe') {
         const p = ent as ProbeEntity;
         if (p.groupId === undefined) p.groupId = 1;
+
+        detail.appendChild(createNumInput('Tolerance', p.heatTolerance ?? 1800, v => (p.heatTolerance = v), 100, 'inp-tol'));
 
         detail.appendChild(
           createNumInput(
@@ -413,18 +436,21 @@ function updateSidebarValues(game: ThermoGame, selectedKey: HexCubeKey | null) {
 
   if (ent.type === 'sink') {
     const s = ent as SinkEntity;
-    updateInputIfNotFocused('inp-pull', s.pullRate);
     updateInputIfNotFocused('inp-cond', s.conductivity);
+    updateInputIfNotFocused('inp-pull', s.pullRate);
+    updateInputIfNotFocused('inp-tol', s.heatTolerance ?? 1400);
     updateInputIfNotFocused('inp-sink-group', s.groupId ?? 1);
   }
 
   if (ent.type === 'shield') {
     updateInputIfNotFocused('inp-cond', (ent as ShieldEntity).conductivity);
+    updateInputIfNotFocused('inp-tol', (ent as ShieldEntity).heatTolerance ?? 2000);
     updateInputIfNotFocused('inp-shield-group', (ent as ShieldEntity).groupId ?? 1);
   }
 
   if (ent.type === 'probe') {
     const p = ent as ProbeEntity;
+    updateInputIfNotFocused('inp-tol', p.heatTolerance ?? 1800);
     if (p.groupId === undefined) p.groupId = 1;
     updateInputIfNotFocused('inp-probe-group', p.groupId);
   }
@@ -1215,6 +1241,29 @@ function wireTopControls(game: ThermoGame, state: AppState, requestRender: () =>
     
     input.click();
   };
+
+  mustGetEl<HTMLButtonElement>('btn-clear').onclick = (e) => {
+    e.preventDefault();
+    console.log('Btn Clear Clicked');
+    // Direct clear, no confirm dialog to avoid issues
+    console.log('Clearing layout...');
+    game.clear();
+    
+    // Clear UI containers before re-initializing to avoid duplicates
+    mustGetEl('source-controls').innerHTML = '';
+    mustGetEl('shield-controls').innerHTML = '';
+    mustGetEl('reservoir-controls').innerHTML = '';
+    mustGetEl('capacitor-controls').innerHTML = '';
+
+    // Reset controls
+    initSourceControls(game, state, requestRender);
+    initShieldControls(game, requestRender);
+    initReservoirControls(game, requestRender);
+    initCapacitorControls(game, requestRender);
+
+    requestRender();
+    console.log('Clear complete');
+  };
 }
 
 function wireKeyboardShortcuts(game: ThermoGame, state: AppState, requestRender: () => void) {
@@ -1243,7 +1292,7 @@ function wireKeyboardShortcuts(game: ThermoGame, state: AppState, requestRender:
 const app = mustGetEl<HTMLDivElement>('app');
 mountLayout(app);
 
-const { game, hexGrid } = createGameAndGrid();
+const { game, hexGrid, layout } = createGameAndGrid();
 
 const state: AppState = {
   isPlaying: false,
@@ -1311,5 +1360,23 @@ function stopLoop() {
 }
 
 // Initial Render
+game.deserialize(JSON.stringify(defaultLayout));
+initSourceControls(game, state, requestRender);
+initShieldControls(game, requestRender);
+initReservoirControls(game, requestRender);
+initCapacitorControls(game, requestRender);
+
 requestRender();
+
+window.addEventListener('resize', () => {
+    // Recalculate center
+    // Sidebars: Left=300px, Right=280px. Total=580px.
+    const newCenterX = (window.innerWidth - 580) / 2;
+    const newCenterY = window.innerHeight / 2;
+
+    layout.origin.x = newCenterX;
+    layout.origin.y = newCenterY;
+    hexGrid.updateLayout(layout);
+    requestRender();
+});
 

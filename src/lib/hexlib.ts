@@ -453,12 +453,17 @@ export function hexCornerLOS(
   for (const key of allHexesToConsider) {
     const h = parseHexCubeKey(key);
     // don’t treat endpoints as obstacles
-    if ((h.x === a.x && h.y === a.y && h.z === a.z) ||
-        (h.x === b.x && h.y === b.y && h.z === b.z)) {
-      continue;
-    }
     if (!blocked(h)) continue;
-    obstacles.push(hexCorners(h, layout));
+
+    // Inflate polygon slightly to prevent rays passing through shared edges/vertices
+    // due to floating point epsilon (the "grazing leak").
+    const rawCorners = hexCorners(h, layout);
+    const center = hexToPixel(h, layout);
+    const inflated = rawCorners.map(p => ({
+        x: center.x + (p.x - center.x) * 1.1,
+        y: center.y + (p.y - center.y) * 1.1
+    }));
+    obstacles.push(inflated);
   }
 
   // Try all 36 corner-to-corner segments

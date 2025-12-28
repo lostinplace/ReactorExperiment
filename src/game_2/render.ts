@@ -15,6 +15,7 @@ export function mapThermoToHexGrid(game: ThermoGame): Map<HexCubeKey, HexState> 
 
         if (ent) {
             tags.add(ent.type);
+            if (ent.destroyed) tags.add('destroyed');
 
             // check to see if it's a shield type, if so we get the disabled state from the simulation state
             if (ent.type === 'shield') {
@@ -53,11 +54,21 @@ export function getThermoStyle(state: HexState): HexCellStyle {
         if (state.tags.has('active')) style.text = '🔆' + ((state.data?.ent?.groupId || 0) > 0 ? state.data?.ent?.groupId : '');
         else style.text = '⭕';
     } else if (state.tags.has('sink')) {
-        style.className = 'sink-cell';
-        style.color = 'white';
-        style.text = '🕳️' + ((state.data?.ent?.groupId || 0) > 0 ? state.data?.ent?.groupId : '');
+        if (state.tags.has('destroyed')) {
+            style.className = 'sink-cell-destroyed';
+            style.text = '💥'; 
+            style.color = 'white'; // Assuming destroyed sinks should still have white text
+        } else {
+            style.className = 'sink-cell';
+            style.color = 'white';
+            style.text = '🕳️' + ((state.data?.ent?.groupId || 0) > 0 ? state.data?.ent?.groupId : '');
+        }
     } else if (state.tags.has('shield')) {
-        if (state.tags.has('disabled')) {
+        if (state.tags.has('destroyed')) {
+            style.className = 'shield-cell-destroyed';
+            style.text = '🕸';
+            style.color = '#a55';
+        } else if (state.tags.has('disabled')) {
             style.className = 'disabled-shield-cell';
             style.color = 'gray';
         }
@@ -67,8 +78,14 @@ export function getThermoStyle(state: HexState): HexCellStyle {
         }
         style.text = '⛊' + ((state.data?.ent?.groupId || 0) > 0 ? state.data?.ent?.groupId : '');
     } else if (state.tags.has('probe')) {
-        style.className = 'probe-cell';
-        style.text = '🌡' + ((state.data?.ent?.groupId || 0) > 0 ? state.data?.ent?.groupId : '');
+        if (state.tags.has('destroyed')) {
+            style.className = 'probe-cell-destroyed';
+            style.text = '☠️';
+            style.color = '#555'; // Dark gray text
+        } else {
+            style.className = 'probe-cell';
+            style.text = '⚡' + ((state.data?.ent?.groupId || 0) > 0 ? state.data?.ent?.groupId : '');
+        }
     } else {
         style.className = 'monitor-cell';
         style.color = getHeatContrastColor(temp);

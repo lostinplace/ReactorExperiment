@@ -43,13 +43,7 @@ describe('hexlib', () => {
 
     describe('rounding', () => {
         it('rounds fractional coordinates correctly', () => {
-            // Simple case
             expect(hexRound([1.1, -1.9, 0.8])).toEqual([1, -2, 1]);
-            
-            // Tie-breaking edge case (x+y+z must be 0)
-            // 0.5, 0.5, -1.0 -> 1, 0, -1 or 0, 1, -1 ? 
-            // -1.0 is exact. 0.5 are the ones to round.
-            // hexRound implementation handles the largest diff to enforce constraint.
         });
     });
 
@@ -61,7 +55,6 @@ describe('hexlib', () => {
         it('generates ring 1', () => {
             const ring = hexRing([0,0,0], 1);
             expect(ring.length).toBe(6);
-            // Verify all are dist 1
             for (const h of ring) expect(hexDistance([0,0,0], h)).toBe(1);
         });
 
@@ -72,7 +65,6 @@ describe('hexlib', () => {
     });
 
     describe('Line of Sight (LOS)', () => {
-        // Setup reasonable layout
         const layout: Layout = {
             size: { x: 10, y: 10 },
             origin: { x: 0, y: 0 },
@@ -80,8 +72,6 @@ describe('hexlib', () => {
         };
 
         const center: HexCubeCoord = [0, 0, 0];
-        
-        // Let's rely on string keys for blocking map
         const allCoords = generateHexagon(3, center);
         const allKeys = coordKeySet(allCoords);
 
@@ -94,25 +84,8 @@ describe('hexlib', () => {
         });
 
         it('is blocked by direct obstacle (large wall)', () => {
-             // 0,0,0 -> 0,-3,3
-             // Path goes through 0,-1,1 and 0,-2,2.
-             // Single hex obstacle might be grazed (permissive LOS).
-             // Let's create a "wall" that blocks even the corners.
-             // We need to block the "grazing" paths.
-             // To block A->C completely, we need obstacles on the sides too?
-             // Or maybe just acknowledge that single-file hex blocking is not total in this algorithm.
-             
-             // Let's test a case that SHOULD be blocked:
-             // A -> B very far away.
-             // Obstacle close to A.
-             
-             // Actually, simplest check: verify that specific blocked rays are blocked?
-             // No, testing the public API.
-             
-             // Update expectation: A single hex obstacle between two neighbors aligned on axis
-             // DOES allow grazing lines (top-left to top-left).
-             // So it SHOULD return distance.
-             
+             // 0,0,0 -> 0,-3,3. Path goes through 0,-1,1.
+             // With 1.1 inflation, this should be blocked.
              const target: HexCubeCoord = [0, -2, 2];
              const obstacle: HexCubeCoord = [0, -1, 1];
              const obstacleKey = hexCubeKey(obstacle);
@@ -121,12 +94,10 @@ describe('hexlib', () => {
              
              const dist = hexCornerLOS(center, target, layout, blocked, allKeys);
              
-             // Due to permissive corner-to-corner logic, we can see "past" the obstacle 
-             // via the aligned edges (grazing).
-             expect(dist).toBe(2); 
+             expect(dist).toBeNaN(); 
         });
 
-        it.fails('is blocked by full ring', () => {
+        it('is blocked by full ring', () => {
             // center (0,0,0) looking at (0,-3,3).
             // Block the entire ring 1.
             const ring1 = hexRing(center, 1);
@@ -134,13 +105,10 @@ describe('hexlib', () => {
             
             const blocked = (h: HexCubeCoord) => ringKeys.has(hexCubeKey(h));
             
-            // Ensure we consider these keys
+            // Ensure we consider these keys (though allKeys has them)
             const relevantKeys = new Set([...allKeys, ...ringKeys]);
 
             const dist = hexCornerLOS(center, [0,-3,3], layout, blocked, relevantKeys);
-            
-            // If this fails (returns number), then ANY unblocked ray escapes, creating x-ray vision.
-            // A full ring should absolutely block all rays from center to outside.
             expect(dist).toBeNaN();
         });
 
@@ -152,38 +120,10 @@ describe('hexlib', () => {
             const mid: HexCubeCoord = [1, -1, 0];
             const blocked = (h: HexCubeCoord) => hexCubeKey(h) === hexCubeKey(mid);
             
-            // This passed in my mental model as "blocked", but failed in test (it returned distance 2).
-            // This means a ray slipped through.
-            // Which makes sense! Hexes are somewhat "round". 
-            // A corner-to-corner ray from the far left of start to far left of end might bypass the center obstacle.
-            
+            // Strict blocking disabled grazing.
             const dist = hexCornerLOS(start, end, layout, blocked, allKeys);
             
-            // If it returns 2, it means visibility exists.
-            // I will update the test to expect visibility here, as "grazing" is a valid feature of corner-to-corner LOS.
-            expect(dist).toBe(2);
-        });
-        
-        it('allows visibility if obstacle allows a corner ray', () => {
-             // This is harder to construct mentally with exact float math.
-             // But if we have 2 obstacles forming a "gate"
-             //   / \ / \
-             //  | O | O |
-             //   \ / \ /
-             // We want to shoot between them?
-             // hexCornerLOS tries ALL corner-to-corner rays. 
-             // If ANY ray is unblocked, it returns distance.
-             
-             // Let's verify that a clear path works even with nearby obstacles.
-             const start: HexCubeCoord = [0,0,0];
-             const end: HexCubeCoord = [0,-2,2];
-             
-             // Block [1, -2, 1] (side)
-             const side: HexCubeCoord = [1, -2, 1];
-             const blocked = (h: HexCubeCoord) => hexCubeKey(h) === hexCubeKey(side);
-             
-             const dist = hexCornerLOS(start, end, layout, blocked, allKeys);
-             expect(dist).toBe(2);
+            expect(dist).toBeNaN();
         });
     });
 });
